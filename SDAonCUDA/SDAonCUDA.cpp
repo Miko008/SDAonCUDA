@@ -8,6 +8,24 @@
 #include <cstring>
 #include <chrono>
 
+struct Coords
+{
+    int z, y, x;
+
+    void rotate90Z()
+    {
+        int temp = x;
+        x = y;
+        y = -temp;
+    }
+    void rotate90y()
+    {
+        int temp = x;
+        x = z;
+        z = -temp;
+    }
+};
+
 
 template<class BitDepth>
 class Image
@@ -123,6 +141,29 @@ public:
 
 };
 
+
+class HistogramArray
+{
+    uint16_t** histogram;
+
+public:
+    HistogramArray(uint32_t origins, uint16_t bitDepth)
+    {
+        histogram = new uint16_t * [origins];
+        for (uint16_t i = 0; i < origins; i++)
+            histogram[i] = new uint16_t[bitDepth];
+    }
+
+    uint16_t& HistogramArray::operator()(uint32_t o, uint16_t d)
+    {
+        return histogram[o][d];
+    }
+
+};
+
+#pragma region TiffIO
+
+
 template<class BitDepth>
 bool ReadTiff(Image<BitDepth>& image, const char* filename)
 {
@@ -221,13 +262,15 @@ bool CropTiff(Image<BitDepth>& image, Image<BitDepth>& croppedImage,
     return true;
 }
 
+#pragma endregion
+
 template<class InBitDepth, class OutBitDepth>
 void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
 {
     uint32_t width = image.width,
              height = image.height,
              frames = image.frames;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheap ceil
+    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
 
     for (uint32_t z = iradius; z < frames - iradius; z++)
     {
@@ -235,36 +278,154 @@ void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int
         for (uint32_t y = iradius; y < height - iradius; y++)
             for (uint32_t x = iradius; x < width - iradius; x++)
                 for (int16_t k = -iradius; k <= iradius; k++)
-                    for (int16_t i = -iradius; i <= iradius; i++)
-                        for (int16_t j = -iradius; j <= iradius; j++)
+                    for (int16_t j = -iradius; j <= iradius; j++)
+                        for (int16_t i = -iradius; i <= iradius; i++)
                             if (i * i + j * j + k * k <= radius * radius)
-                                if (image(z + k, y + i, x + j) >= image(z, y, x) + threshold)
+                                if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
                                     output(z, y, x)++;
     }
 }
 
+template<class InBitDepth, class OutBitDepth>
+void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
+{
+    uint32_t width = image.width,
+             height = image.height,
+             frames = image.frames;
+    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+
+    for (uint32_t z = 0; z < frames; z++)
+    {
+        std::cout << z << " ";
+        for (uint32_t y = 0; y < height; y++)
+            for (uint32_t x = 0; x < width; x++)
+                for (int16_t k = -iradius; k <= iradius; k++)
+                    if (0 <= z + k && z + k < frames)
+                        for (int16_t j = -iradius; j <= iradius; j++)
+                            if (0 <= y + j && y + j < height)
+                                for (int16_t i = -iradius; i <= iradius; i++)
+                                    if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
+                                        if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
+                                            output(z, y, x)++;
+    }
+}
+
+//template<class InBitDepth, class OutBitDepth>
+//void SinglePixelDominance(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold, uint32_t z, uint32_t y, uint32_t x)
+//{
+//    for (int16_t k = -iradius; k <= iradius; k++)
+//        if (0 <= z + k && z + k < frames)
+//            for (int16_t j = -iradius; j <= iradius; j++)
+//                if (0 <= y + j && y + j < height)
+//                    for (int16_t i = -iradius; i <= iradius; i++)
+//                        if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
+//                            if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
+//                                output(z, y, x)++;
+//}
+
+uint16_t SetUpRadiusDifference(float radius, Coords* DifferenceAdd, Coords* DifferenceRem)
+{
+    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t margin = iradius * 2 + 1;
+    uint16_t numberOfDifs = 0;
+    
+    Image<uint8_t> tempArray = Image<uint8_t>(margin, margin, margin);
+
+    for (uint8_t origin = 0; origin < 2; origin++)  //mark 2 offset balls
+    {
+        numberOfDifs = 0;
+        for (int16_t k = -iradius; k <= iradius; k++)
+            for (int16_t j = -iradius; j <= iradius; j++)
+                for (int16_t i = -iradius; i <= iradius; i++)
+                    if (i * i + j * j + k * k <= radius * radius)
+                    {
+                        if (tempArray(k + iradius + origin, j + iradius, i + iradius) == 0)
+                            numberOfDifs++;
+                        tempArray(k + iradius + origin, j + iradius, i + iradius) += 2;
+                    }
+    }
+
+    DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
+    DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
+    uint16_t addIndex = 0,
+             remIndex = 0;
+
+    for (int16_t k = 0; k < margin; k++)
+        for (int16_t j = 0; j < margin; j++)
+            for (int16_t i = 0; i < margin; i++)
+            {
+                if (tempArray(k, j, i) == 1)
+                    DifferenceRem[addIndex++] = { k - (iradius + 1), j - iradius, i - iradius };
+                if (tempArray(k, j, i) == 2)
+                    DifferenceAdd[remIndex++] = { k - (iradius + 1), j - iradius, i - iradius };
+            }
+
+    return numberOfDifs;
+}
+
+
+template<class InBitDepth, class OutBitDepth>
+void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
+{
+    uint32_t width = image.width,
+             height = image.height,
+             frames = image.frames;
+    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    
+    Coords* DiffAdd = nullptr, * DiffRem = nullptr;
+    uint16_t DiffLen = SetUpRadiusDifference(radius, DiffAdd, DiffRem);
+
+    //uint16_t* histogram = new uint16_t[sizeof(OutBitDepth)];
+    HistogramArray histogram = HistogramArray(frames, 8 * sizeof(OutBitDepth));
+
+    for (int16_t k = -iradius; k <= iradius; k++)
+        for (int16_t j = -iradius; j <= iradius; j++)
+            for (int16_t i = -iradius; i <= iradius; i++)
+                if (i * i + j * j + k * k <= radius * radius)
+                    histogram(0, image(iradius + k, iradius + j, iradius + i))++;
+
+
+    //for (uint32_t z = iradius; z < frames - iradius; z++)
+
+
+
+    //for (uint32_t z = iradius; z < frames - iradius; z++)
+    //{
+    //    std::cout << z << " ";
+    //    for (uint32_t y = iradius; y < height - iradius; y++)
+    //        for (uint32_t x = iradius; x < width - iradius; x++)
+    //            for (int16_t k = -iradius; k <= iradius; k++)
+    //                for (int16_t j = -iradius; j <= iradius; j++)
+    //                    for (int16_t i = -iradius; i <= iradius; i++)
+    //                        if (i * i + j * j + k * k <= radius * radius)
+    //                            if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
+    //                                output(z, y, x)++;
+    //}
+}
 
 
 int main()
 {
     std::string file = "C:/Users/Miko/Desktop/MgrTif/";
-    std::string input = "zebrafish";
-    std::string output = "zebraCropped 10x10x1";
+    std::string input = "zebraCropped 10x10x1";
+    std::string output = "zebraCropped 10x10x1 bl";
     std::string type = ".tif";
 
     std::cout << "Started\n";
 
-    Image<uint8_t> image = Image<uint8_t>();
-    ReadTiff(image, (file + input + type).c_str());
-
     Image<uint8_t> croppedImage = Image<uint8_t>();
-    if(!CropTiff(image, croppedImage, 600, 600, 0, 900, 900, 50))
-    {
-        std::cout << "Failed Cropping image.\n";
-        return 1;
-    }
-    SaveTiff(croppedImage, (file + output + type).c_str());
-    //ReadTiff(croppedImage, "C:/Users/Miko/Desktop/MgrTif/zebraCropped 5x5x1.tif");
+
+    //Image<uint8_t> image = Image<uint8_t>();
+    //ReadTiff(image, (file + input + type).c_str());
+
+    //if(!CropTiff(image, croppedImage, 600, 600, 0, 900, 900, 50))
+    //{
+    //    std::cout << "Failed Cropping image.\n";
+    //    return 1;
+    //}
+    //SaveTiff(croppedImage, (file + output + type).c_str());
+
+    ReadTiff(croppedImage, (file + input + type).c_str());
 
     for (int i = 0; i < 1; i++)
     {
@@ -272,17 +433,21 @@ int main()
         int thresh = 40 + 5 * i;
         Image<uint8_t> out = Image<uint8_t>(croppedImage.width, croppedImage.height, croppedImage.frames);
 
-        auto start = std::chrono::high_resolution_clock::now();
-        SDA(croppedImage, out, radius, thresh);
+
+        FlyingHistogram(croppedImage, out, radius, thresh);
+
+
+        /*auto start = std::chrono::high_resolution_clock::now();
+        SDAborderless(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
 
         std::cout << "\nTime Elapsed:" << (finish - start).count() << std::endl;
 
         out.Normalize();
         char buffer[128] = { 0 };
-        sprintf_s(buffer, "%s%s %i - %i %s", file.c_str(), output.c_str(), (int)(radius * 100), thresh, type.c_str());
+        sprintf_s(buffer, "%s %i - %i %s", (file + output).c_str(), (int)(radius * 100), thresh, type.c_str());
         std::cout << '\n' << buffer << '\n';
-        SaveTiff(out, buffer);
+        SaveTiff(out, buffer);*/
     }
 
     std::cout << "Finished\n";
