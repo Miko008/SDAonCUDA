@@ -8,25 +8,6 @@
 #include <cstring>
 #include <chrono>
 
-struct Coords
-{
-    int z, y, x;
-
-    void rotate90Z()
-    {
-        int temp = x;
-        x = y;
-        y = -temp;
-    }
-    void rotate90y()
-    {
-        int temp = x;
-        x = z;
-        z = -temp;
-    }
-};
-
-
 template<class BitDepth>
 class Image
 {
@@ -142,23 +123,68 @@ public:
 };
 
 
+class Coords
+{
+public:
+    int z, y, x;
+
+    Coords()
+    {
+        z = 0;
+        y = 0;
+        x = 0;
+    }
+
+    Coords(int _z, int _y, int _x)
+    {
+        z = _z;
+        y = _y;
+        x = _x;
+    }
+
+    void rotate90Z()
+    {
+        int temp = x;
+        x = y;
+        y = -temp;
+    }
+    void rotate90y()
+    {
+        int temp = x;
+        x = z;
+        z = -temp;
+    }
+};
+
+
 class HistogramArray
 {
-    uint16_t** histogram;
-
+    uint16_t* histogram;
+    uint32_t length;
 public:
-    HistogramArray(uint32_t origins, uint16_t bitDepth)
+    HistogramArray(uint16_t byteDepth)
     {
-        histogram = new uint16_t * [origins];
-        for (uint16_t i = 0; i < origins; i++)
-            histogram[i] = new uint16_t[bitDepth];
+        length = 1 << 8 * byteDepth; // 2 ^ (bitDepth), so cell for every possible value
+        histogram = new uint16_t[length];
     }
 
-    uint16_t& HistogramArray::operator()(uint32_t o, uint16_t d)
+    HistogramArray(const HistogramArray &pattern)
     {
-        return histogram[o][d];
+        length = pattern.length;
+        histogram = new uint16_t[length];
+        for (uint16_t i = 0; i < length; i++)
+            histogram[i] = pattern.histogram[i];
     }
 
+    uint16_t& HistogramArray::operator()(uint16_t d)
+    {
+        return histogram[d];
+    }
+    
+    uint32_t Length()
+    {
+        return length;
+    }
 };
 
 #pragma region TiffIO
@@ -323,15 +349,23 @@ void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float r
 //                                output(z, y, x)++;
 //}
 
-uint16_t SetUpRadiusDifference(float radius, Coords* DifferenceAdd, Coords* DifferenceRem)
+/// <summary>
+/// 
+/// </summary>
+/// <param name="radius"></param>
+/// <param name="direction"> 0 - z, 1 - y, 2 - x</param>
+/// <param name="DifferenceAddPtr"></param>
+/// <param name="DifferenceRemPtr"></param>
+/// <returns></returns>
+uint16_t SetUpRadiusDifference(float radius, uint8_t direction, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
 {
     uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
     uint16_t margin = iradius * 2 + 1;
     uint16_t numberOfDifs = 0;
-    
+
     Image<uint8_t> tempArray = Image<uint8_t>(margin, margin, margin);
 
-    for (uint8_t origin = 0; origin < 2; origin++)  //mark 2 offset balls
+    for (int origin = 1; origin >= 0; origin--)  //mark 2 offset spheres
     {
         numberOfDifs = 0;
         for (int16_t k = -iradius; k <= iradius; k++)
@@ -339,14 +373,35 @@ uint16_t SetUpRadiusDifference(float radius, Coords* DifferenceAdd, Coords* Diff
                 for (int16_t i = -iradius; i <= iradius; i++)
                     if (i * i + j * j + k * k <= radius * radius)
                     {
-                        if (tempArray(k + iradius + origin, j + iradius, i + iradius) == 0)
-                            numberOfDifs++;
-                        tempArray(k + iradius + origin, j + iradius, i + iradius) += 2;
+                        switch (direction)
+                        {
+                        default:
+                        case 0:
+                            if (tempArray(k + iradius + origin, j + iradius, i + iradius) == 0)
+                                numberOfDifs++;
+                            tempArray(k + iradius + origin, j + iradius, i + iradius) += 2;
+                            break;
+                        case 1:
+                            if (tempArray(k + iradius, j + iradius + origin, i + iradius) == 0)
+                                numberOfDifs++;
+                            tempArray(k + iradius, j + iradius + origin, i + iradius) += 2;
+                            break;
+                        case 2:
+                            if (tempArray(k + iradius, j + iradius, i + iradius + origin) == 0)
+                                numberOfDifs++;
+                            tempArray(k + iradius, j + iradius, i + iradius + origin) += 2;
+                            break;
+                        }
                     }
     }
 
-    DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
-    DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
+    std::cout << numberOfDifs << " ";
+
+    Coords* DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
+    Coords* DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
+    *DifferenceAddPtr = DifferenceAdd;
+    *DifferenceRemPtr = DifferenceRem;
+
     uint16_t addIndex = 0,
              remIndex = 0;
 
@@ -355,14 +410,38 @@ uint16_t SetUpRadiusDifference(float radius, Coords* DifferenceAdd, Coords* Diff
             for (int16_t i = 0; i < margin; i++)
             {
                 if (tempArray(k, j, i) == 1)
-                    DifferenceRem[addIndex++] = { k - (iradius + 1), j - iradius, i - iradius };
+                    DifferenceRem[remIndex++] = Coords(k - iradius, j - iradius, i - iradius);
                 if (tempArray(k, j, i) == 2)
-                    DifferenceAdd[remIndex++] = { k - (iradius + 1), j - iradius, i - iradius };
+                    DifferenceAdd[addIndex++] = Coords(k - iradius, j - iradius, i - iradius);
             }
 
     return numberOfDifs;
 }
 
+/// <summary>
+/// 
+/// </summary>
+/// <param name="pixel">Currently considered input pixel</param>
+/// <param name="histogram">Used histogram</param>
+/// <param name="threshold"></param>
+template<class InBitDepth, class OutBitDepth>
+OutBitDepth CalculateDominance(InBitDepth pixel, HistogramArray histogram, int threshold)
+{
+    OutBitDepth result = 0;
+    for (uint32_t i = 0; i < histogram.Length(); i++)
+    {
+        if (i >= pixel + threshold)
+            result += histogram(i);
+    }
+    //for (int i = histogram.Length() - 1; i >= 0; i--)
+    //{
+    //    if (i >= pixel + threshold)
+    //        result += histogram(i);
+    //    else
+    //        break;
+    //}
+    return result;
+}
 
 template<class InBitDepth, class OutBitDepth>
 void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
@@ -371,44 +450,64 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
              height = image.height,
              frames = image.frames;
     uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
-    
-    Coords* DiffAdd = nullptr, * DiffRem = nullptr;
-    uint16_t DiffLen = SetUpRadiusDifference(radius, DiffAdd, DiffRem);
+
+    Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;  //array of coords of delta pixels
+    uint16_t DiffLen = SetUpRadiusDifference(radius, 0, &DiffAddZ, &DiffRemZ); //number of delta pixels
+    SetUpRadiusDifference(radius, 1, &DiffAddY, &DiffRemY); 
+    SetUpRadiusDifference(radius, 2, &DiffAddX, &DiffRemX); 
 
     //uint16_t* histogram = new uint16_t[sizeof(OutBitDepth)];
-    HistogramArray histogram = HistogramArray(frames, 8 * sizeof(OutBitDepth));
+    HistogramArray histogramZ = HistogramArray(sizeof(OutBitDepth));
+
 
     for (int16_t k = -iradius; k <= iradius; k++)
         for (int16_t j = -iradius; j <= iradius; j++)
             for (int16_t i = -iradius; i <= iradius; i++)
                 if (i * i + j * j + k * k <= radius * radius)
-                    histogram(0, image(iradius + k, iradius + j, iradius + i))++;
+                    histogramZ(image(iradius + k, iradius + j, iradius + i))++; // compute first histogram
 
+    for (uint32_t z = iradius; z < iradius +2; z++)//frames - iradius; z++)
+    {
+        if(z != iradius)
+            for (uint32_t i = 0; i < DiffLen; i++)    // compute by removing and adding delta pixels to histogram
+            {
+                histogramZ(image(z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, iradius + DiffRemZ[i].x))--;
+                histogramZ(image(z + DiffAddZ[i].z, iradius + DiffAddZ[i].y, iradius + DiffAddZ[i].x))++;
+            }
+    
+        HistogramArray histogramY = HistogramArray(histogramZ);
+        for (uint32_t y = iradius; y < height - iradius; y++)
+        {
+            if (y != iradius)
+                for (uint32_t i = 0; i < DiffLen; i++)    // compute by removing and adding delta pixels to histogram
+                {
+                    histogramY(image(z + DiffRemY[i].z, y + DiffRemY[i].y, iradius + DiffRemY[i].x))--;
+                    histogramY(image(z + DiffAddY[i].z, y + DiffAddY[i].y, iradius + DiffAddY[i].x))++;
+                }
 
-    //for (uint32_t z = iradius; z < frames - iradius; z++)
-
-
-
-    //for (uint32_t z = iradius; z < frames - iradius; z++)
-    //{
-    //    std::cout << z << " ";
-    //    for (uint32_t y = iradius; y < height - iradius; y++)
-    //        for (uint32_t x = iradius; x < width - iradius; x++)
-    //            for (int16_t k = -iradius; k <= iradius; k++)
-    //                for (int16_t j = -iradius; j <= iradius; j++)
-    //                    for (int16_t i = -iradius; i <= iradius; i++)
-    //                        if (i * i + j * j + k * k <= radius * radius)
-    //                            if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
-    //                                output(z, y, x)++;
-    //}
+            HistogramArray histogramX = HistogramArray(histogramY);
+            for (uint32_t x = iradius; x < width - iradius; x++)
+            {
+                if (x != iradius)
+                    for (uint32_t i = 0; i < DiffLen; i++)    // compute by removing and adding delta pixels to histogram
+                    {
+                        histogramX(image(z + DiffRemX[i].z, y + DiffRemX[i].y, x + DiffRemX[i].x))--;
+                        histogramX(image(z + DiffAddX[i].z, y + DiffAddX[i].y, x + DiffAddX[i].x))++;
+                    }
+                output(z, y, x) = CalculateDominance<InBitDepth, OutBitDepth>
+                    (image(z, y, x), histogramX, threshold);
+            }
+        }
+    }
 }
+
 
 
 int main()
 {
     std::string file = "C:/Users/Miko/Desktop/MgrTif/";
-    std::string input = "zebraCropped 10x10x1";
-    std::string output = "zebraCropped 10x10x1 bl";
+    std::string input = "zebraCropped 30x30x5";
+    std::string output = "zebraCropped 30x30x5 fly";
     std::string type = ".tif";
 
     std::cout << "Started\n";
@@ -429,16 +528,13 @@ int main()
 
     for (int i = 0; i < 1; i++)
     {
-        float radius = 3.5;
+        float radius = 2.5;
         int thresh = 40 + 5 * i;
         Image<uint8_t> out = Image<uint8_t>(croppedImage.width, croppedImage.height, croppedImage.frames);
 
-
+        auto start = std::chrono::high_resolution_clock::now();
+        //SDAborderless(croppedImage, out, radius, thresh);
         FlyingHistogram(croppedImage, out, radius, thresh);
-
-
-        /*auto start = std::chrono::high_resolution_clock::now();
-        SDAborderless(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
 
         std::cout << "\nTime Elapsed:" << (finish - start).count() << std::endl;
@@ -447,7 +543,7 @@ int main()
         char buffer[128] = { 0 };
         sprintf_s(buffer, "%s %i - %i %s", (file + output).c_str(), (int)(radius * 100), thresh, type.c_str());
         std::cout << '\n' << buffer << '\n';
-        SaveTiff(out, buffer);*/
+        SaveTiff(out, buffer);
     }
 
     std::cout << "Finished\n";
