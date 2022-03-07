@@ -149,6 +149,22 @@ public:
         x = _x;
     }
 
+    Coords(Coords& pattern)
+    {
+        z = pattern.z;
+        y = pattern.y;
+        x = pattern.x;
+    }
+
+    bool Coords::operator==(const Coords& rhs)
+    {
+        return (z == rhs.z && y == rhs.y && x == rhs.x);
+    }
+    bool Coords::operator!=(Coords& other)
+    {
+        return !(*this == other);
+    }
+
     void Rotate90Z()
     {
         int temp = x;
@@ -159,6 +175,12 @@ public:
     {
         int temp = x;
         x = z;
+        z = -temp;
+    }
+    void Rotate90x()
+    {
+        int temp = y;
+        y = z;
         z = -temp;
     }
 
@@ -392,7 +414,7 @@ void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float r
 /// <param name="DifferenceAddPtr"></param>
 /// <param name="DifferenceRemPtr"></param>
 /// <returns></returns>
-uint16_t SetUpRadiusDifference(float radius, Direction direction, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
+uint16_t SetUpRadiusDifference(float radius, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
 {
     uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
     uint16_t margin = iradius * 2 + 2;              //to fit 2 offset spheres
@@ -405,19 +427,7 @@ uint16_t SetUpRadiusDifference(float radius, Direction direction, Coords** Diffe
 
     for (uint8_t origin = 0; origin < 2; origin++)  //origin offset + id to mark 2 offset spheres
     {
-        switch (direction)
-        {
-        default:
-        case Zdir:
-            z = iradius + origin;
-            break;
-        case Ydir:
-            y = iradius + origin;
-            break;
-        case Xdir:
-            x = iradius + origin;
-            break;
-        }
+        z = iradius + origin;
         numberOfDifs = 0;
         for (int16_t k = -iradius; k <= iradius; k++)
             for (int16_t j = -iradius; j <= iradius; j++)
@@ -430,7 +440,7 @@ uint16_t SetUpRadiusDifference(float radius, Direction direction, Coords** Diffe
                     }
     }
 
-    std::cout << numberOfDifs << " ";
+    //std::cout << numberOfDifs << " ";
 
     Coords* DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
     Coords* DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
@@ -484,18 +494,20 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
              frames = image.frames;
     uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
 
-    Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;  //array of coords of delta pixels
-    uint16_t DiffLen = SetUpRadiusDifference(radius, Zdir, &DiffAddZ, &DiffRemZ); //number of delta pixels
-    SetUpRadiusDifference(radius, Ydir, &DiffAddY, &DiffRemY); 
-    SetUpRadiusDifference(radius, Xdir, &DiffAddX, &DiffRemX); 
+    Coords* DiffAddZ, * DiffRemZ;  //array of coords of delta pixels
+    uint16_t DiffLen = SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ); //number of delta pixels
+    Coords* DiffAddY = new Coords[DiffLen], * DiffRemY = new Coords[DiffLen],
+          * DiffAddX = new Coords[DiffLen], * DiffRemX = new Coords[DiffLen];
 
-    //std::cout << "\nZ Add:\n";
-    //for (uint32_t i = 0; i < DiffLen; i++)
-    //    DiffAddZ[i].dPrint();
-    //std::cout << "Z Rem:\n";
-    //for (uint32_t i = 0; i < DiffLen; i++)
-    //    DiffRemZ[i].dPrint();
-
+    for (uint16_t i = 0; i < DiffLen; i++)  // just rotate vectors instead of generating new
+    {
+        DiffAddX[i] = DiffAddY[i] = DiffAddZ[i]; 
+        DiffRemX[i] = DiffRemY[i] = DiffRemZ[i];
+        DiffAddY[i].Rotate90x();
+        DiffRemY[i].Rotate90x();
+        DiffAddX[i].Rotate90y();
+        DiffRemX[i].Rotate90y();
+    }
 
     HistogramArray histogramZ = HistogramArray(sizeof(OutBitDepth));
 
@@ -529,9 +541,7 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
             {
                 histogramZ(image(z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, iradius + DiffRemZ[i].x))--;
                 histogramZ(image(z + DiffAddZ[i].z, iradius + DiffAddZ[i].y, iradius + DiffAddZ[i].x))++;
-                //std::cout << "\nZ Add:\t z: " << z + DiffAddZ[i].z << "\ty: " << iradius + DiffAddZ[i].y << "\tx: " << iradius + DiffAddZ[i].x << std::endl;
             }
-        //histogramZ.dPrintSum();
 
         HistogramArray histogramY = HistogramArray(histogramZ);
         for (uint32_t y = iradius; y < height - iradius; y++)
@@ -564,16 +574,43 @@ int main()
 {
     std::string file = "C:/Users/Miko/Desktop/MgrTif/";
     std::string input = "zebraCropped 30x30x5";
-    std::string output = "zc 30x30x5 test c";
+    std::string output = "zc 30x30x5 test d";
     std::string type = ".tif";
 
     std::cout << "Started\n";
+
+    ///////// ensure correctness of rotation
+    //float radius = 3.5;
+    //
+    //Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;  //array of coords of delta pixels
+    //uint16_t DiffLen = SetUpRadiusDifference(radius, Zdir, &DiffAddZ, &DiffRemZ); //number of delta pixels
+    //SetUpRadiusDifference(radius, Ydir, &DiffAddY, &DiffRemY);
+    //SetUpRadiusDifference(radius, Xdir, &DiffAddX, &DiffRemX);
+    //
+    //bool same;
+    //for (size_t i = 0; i < DiffLen; i++)
+    //{
+    //    DiffAddZ[i].Rotate90x();
+    //    same = false;
+    //    for (size_t j = 0; j < DiffLen; j++)
+    //    {
+    //        if (DiffAddZ[i] == DiffAddY[j])
+    //        {
+    //            same = true;
+    //            break;
+    //        }
+    //    }
+    //    if (same)
+    //        std::cout << "\nsame";
+    //    else
+    //        std::cout << "\ndifferent";
+    //}
 
     Image<uint8_t> croppedImage = Image<uint8_t>();
 
     //Image<uint8_t> image = Image<uint8_t>();
     //ReadTiff(image, (file + input + type).c_str());
-
+    //
     //if(!CropTiff(image, croppedImage, 600, 600, 0, 900, 900, 50))
     //{
     //    std::cout << "Failed Cropping image.\n";
