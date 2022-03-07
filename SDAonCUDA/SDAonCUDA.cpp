@@ -127,6 +127,28 @@ public:
                     sample[Index(z, y, x)] = (sample[Index(z, y, x)] * newMax) / max;
     }
 
+    void Clear()
+    {
+        for (uint32_t z = 0; z < frames; z++)
+            for (uint32_t y = 0; y < height; y++)
+                for (uint32_t x = 0; x < width; x++)
+                    sample[Index(z, y, x)] = 0;
+    }
+
+    bool Image::operator==(Image& rhs) const
+    {
+        if (frames == rhs.frames && height == rhs.height && width == rhs.width)
+        {
+            for (uint32_t z = 0; z < frames; z++)
+                for (uint32_t y = 0; y < height; y++)
+                    for (uint32_t x = 0; x < width; x++)
+                        if (sample[Index(z, y, x)] != rhs(z, y, x))
+                            return false;
+            return true;
+        }
+        else
+            return false;
+    }
 };
 
 
@@ -624,14 +646,29 @@ int main()
     {
         float radius = 2.5;
         int thresh = 40 + 5 * i;
-        Image<uint8_t> out = Image<uint8_t>(croppedImage.width, croppedImage.height, croppedImage.frames);
+        Image<uint8_t> out = Image<uint8_t>(croppedImage);
+        Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
 
         auto start = std::chrono::high_resolution_clock::now();
-        //SDAborderless(croppedImage, out, radius, thresh);
-        FlyingHistogram(croppedImage, out, radius, thresh);
+        SDA(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
 
-        std::cout << "\nTime Elapsed:" << (finish - start).count() << std::endl;
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
+        std::cout << "\nTime Elapsed:" << microseconds.count() << "us\n";
+
+
+        auto startFH = std::chrono::high_resolution_clock::now();
+        FlyingHistogram(croppedImage, out2, radius, thresh);
+        auto finishFH = std::chrono::high_resolution_clock::now();
+
+        auto microsecondsFH = std::chrono::duration_cast<std::chrono::microseconds>(finishFH - startFH);
+        std::cout << "\nTime Elapsed:" << microsecondsFH.count() << "us\n";
+
+        if (out == out2)
+            std::cout << "\nSame outputs\n";
+        else
+            std::cout << "\nDifferent outputs\n";
+
 
         out.Normalize();
         char buffer[128] = { 0 };
