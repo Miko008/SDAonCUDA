@@ -140,6 +140,16 @@ public:
         else
             return false;
     }
+
+    uint64_t dSum()
+    {
+        uint64_t result = 0;
+        for (uint32_t z = 0; z < frames; z++)
+            for (uint32_t y = 0; y < height; y++)
+                for (uint32_t x = 0; x < width; x++)
+                    result += sample[Index(z, y, x)];
+        return result;
+    }
 };
 
 
@@ -631,8 +641,22 @@ int main()
     //}
     //SaveTiff(croppedImage, (file + output + type).c_str());
 
-    ReadTiff(croppedImage, (file + input + type).c_str());
+    ////gpu check 
+    //int* a,* b,* c, len = 100;
+    //a = new int[len];
+    //b = new int[len];
+    //c = new int[len];
+    //for (int i = 0; i < len; i++)
+    //{
+    //    a[i] = 5 + i;
+    //    b[i] = 3 - i;
+    //    c[i] = 0;
+    //}
+    //Test::addWithCuda(c, a, b, len);
+    //for (int i = 0; i < len; i++)
+    //    std::cout << " " << c[i];
 
+    ReadTiff(croppedImage, (file + input + type).c_str());
 
     for (int i = 0; i < 1; i++)
     {

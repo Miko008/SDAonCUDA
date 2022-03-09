@@ -9,4 +9,6 @@ namespace Test
 	
 	void GpuSDA(uint8_t* image, uint8_t* output, float radius, int threshold,
 		uint32_t frames, uint32_t height, uint32_t width);
+
+	void addWithCuda(int* c, const int* a, const int* b, int size);
 }
