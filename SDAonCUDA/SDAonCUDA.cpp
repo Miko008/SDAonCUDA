@@ -1,12 +1,13 @@
 ﻿// SDAonCUDA.cpp : Defines the entry point for the application.
 //
 
+#include <cstring>
+#include <chrono>
+
 #include "SDAonCUDA.h"
 #include "tinytiffreader.h"
 #include "tinytiffwriter.h"
-
-#include <cstring>
-#include <chrono>
+#include "test.h"
 
 enum Direction
 {
@@ -65,6 +66,10 @@ public:
         return (z * (uint64_t)height + y) * width + x;
     }
 
+    uint64_t GetSize()
+    {
+        return frames * height * width;
+    }
 
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames)
     {
@@ -76,12 +81,6 @@ public:
         sample = (BitDepth*)calloc(frames * (uint64_t)height * width, sizeof(BitDepth));
     }
 
-    /// <summary>
-    /// Deep copies single slide into image object.
-    /// </summary>
-    /// <param name="frame">index of frame being saved</param>
-    /// <param name="newslide">data to save</param>
-    /// <returns></returns>
     bool SetSlide(uint32_t frame, BitDepth* newslide)
     {
         if (frame < frames)
@@ -96,14 +95,6 @@ public:
             return false;
         return true;
     }
-
-
-    /*void SetTo(BitDepth value)
-    {
-        for (uint32_t i = 0; i < width * (uint64_t)height * frames; i++)
-            sample[i] = value;
-    }*/
-
 
     BitDepth MaxValue()
     {
@@ -642,6 +633,7 @@ int main()
 
     ReadTiff(croppedImage, (file + input + type).c_str());
 
+
     for (int i = 0; i < 1; i++)
     {
         float radius = 2.5;
@@ -649,13 +641,16 @@ int main()
         Image<uint8_t> out = Image<uint8_t>(croppedImage);
         Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
 
+        uint8_t* inptr = croppedImage.sample,
+               * outptr = out.sample;
+
         auto start = std::chrono::high_resolution_clock::now();
-        SDA(croppedImage, out, radius, thresh);
+        Test::GpuSDA(inptr, outptr, radius, thresh, out.frames, out.height, out.width);
+        //SDA(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
 
         auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
         std::cout << "\nTime Elapsed:" << microseconds.count() << "us\n";
-
 
         auto startFH = std::chrono::high_resolution_clock::now();
         FlyingHistogram(croppedImage, out2, radius, thresh);
@@ -668,7 +663,6 @@ int main()
             std::cout << "\nSame outputs\n";
         else
             std::cout << "\nDifferent outputs\n";
-
 
         out.Normalize();
         char buffer[128] = { 0 };
