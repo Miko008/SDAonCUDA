@@ -153,9 +153,8 @@ public:
 };
 
 
-class Coords
+struct Coords
 {
-public:
     int z, y, x;
 
     Coords()
@@ -596,8 +595,8 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
 int main()
 {
     std::string file = "C:/Users/Miko/Desktop/MgrTif/";
-    std::string input = "zebraCropped 30x30x5";
-    std::string output = "zc 30x30x5 test d";
+    std::string input = "zebraCropped 50x50x5";
+    std::string output = "zc 50x50x5 test";
     std::string type = ".tif";
 
     std::cout << "Started\n";
@@ -655,6 +654,7 @@ int main()
     //Test::addWithCuda(c, a, b, len);
     //for (int i = 0; i < len; i++)
     //    std::cout << " " << c[i];
+    //return 0;
 
     ReadTiff(croppedImage, (file + input + type).c_str());
 
@@ -669,19 +669,19 @@ int main()
                * outptr = out.sample;
 
         auto start = std::chrono::high_resolution_clock::now();
-        Test::GpuSDA(inptr, outptr, radius, thresh, out.frames, out.height, out.width);
-        //SDA(croppedImage, out, radius, thresh);
+        GPU::SDA(inptr, outptr, radius, thresh, out.frames, out.height, out.width);
         auto finish = std::chrono::high_resolution_clock::now();
 
-        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
-        std::cout << "\nTime Elapsed:" << microseconds.count() << "us\n";
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
+        std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
 
         auto startFH = std::chrono::high_resolution_clock::now();
-        FlyingHistogram(croppedImage, out2, radius, thresh);
+        //SDAborderless(croppedImage, out2, radius, thresh);
+        //FlyingHistogram(croppedImage, out2, radius, thresh);
         auto finishFH = std::chrono::high_resolution_clock::now();
 
-        auto microsecondsFH = std::chrono::duration_cast<std::chrono::microseconds>(finishFH - startFH);
-        std::cout << "\nTime Elapsed:" << microsecondsFH.count() << "us\n";
+        auto millisecondsFH = std::chrono::duration_cast<std::chrono::milliseconds>(finishFH - startFH);
+        std::cout << "\nTime Elapsed:" << millisecondsFH.count() << "ms\n";
 
         if (out == out2)
             std::cout << "\nSame outputs\n";

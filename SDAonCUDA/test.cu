@@ -14,16 +14,9 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 	}
 }
 
-namespace Test
+namespace GPU
 {
-	void asd(float a)
-	{
-		int b = a;
-		int c = b * a;
-		c++;
-	}
-
-	__global__ void SingleSDA(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold, uint64_t size)
+	__global__ void gpuSDAmultiDim(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold, uint64_t size)
 	{
 		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
 		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -41,11 +34,35 @@ namespace Test
 								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
 									out[(z * height + y) * width + x]++;
 	}
+	__global__ void gpuSDAsingleDim(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold, uint64_t size)
+	{
+		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
+ 		uint32_t x = (tempid) % width;
+		tempid /= width;
+		uint32_t y = tempid % height;
+		tempid /= height;
+		uint32_t z = tempid % frames;
+
+		if (tempid / frames > 0)
+			return;
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			if (0 <= z + k && z + k < frames)
+				for (int16_t j = -iradius; j <= iradius; j++)
+					if (0 <= y + j && y + j < height)
+						for (int16_t i = -iradius; i <= iradius; i++)
+							if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
+								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
+									out[(z * height + y) * width + x]++;
+	}
 
 	//template<class InBitDepth, class OutBitDepth>
 	//void GpuSDA(InBitDepth* image, OutBitDepth* output, float radius, int threshold)
-	void GpuSDA(uint8_t* input, uint8_t* output, float radius, int threshold, uint32_t frames, uint32_t height, uint32_t width)
+	void SDA(uint8_t* input, uint8_t* output, float radius, int threshold, uint32_t frames, uint32_t height, uint32_t width)
 	{
+		//cudaDeviceProp prop;
+		//cudaGetDeviceProperties(&prop, 0);
+		//std::cout << "\ngrid:" << prop.maxGridSize[0] << "\n" << prop.maxGridSize[1] << "\n" << prop.maxGridSize[2] << "\n" << prop.maxSurface3D[0];
 		uint64_t size = frames * height * width;
 		uint8_t* dev_Input,* dev_Output;
 
@@ -54,11 +71,15 @@ namespace Test
 
 		cudaMemcpy(dev_Input, input, size * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
-		dim3 numBlocks(64, 64, 8);
-		dim3 threadsPerBlock(8, 8, 8);
+		uint16_t iradius = (uint16_t)radius + 0.999;
 
-		uint16_t iradius = (uint16_t) radius + 0.999;
-		SingleSDA<<<numBlocks, threadsPerBlock>>>(dev_Input, dev_Output, frames, height, width, radius, iradius, threshold, size);
+		//dim3 numBlocks(64, 8, 8);
+		//dim3 threadsPerBlock(8, 8, 8);
+		//SingleSDA<<<numBlocks, threadsPerBlock>>>(dev_Input, dev_Output, frames, height, width, radius, iradius, threshold, size);
+		
+		dim3 numBlocks(size / 1024 + 1, 1, 1);
+		dim3 threadsPerBlock(1024, 1, 1);
+		gpuSDAsingleDim<<<numBlocks, threadsPerBlock>>>(dev_Input, dev_Output, frames, height, width, radius, iradius, threshold, size);
 
 		cudaDeviceSynchronize();
 
