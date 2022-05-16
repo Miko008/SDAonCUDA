@@ -2,9 +2,11 @@
 # project specific logic here.
 #
 cmake_minimum_required (VERSION 3.8)
+project (SDAonCUDA LANGUAGES CUDA CXX)
+
 
 # Add source to this project's executable.
-add_executable (SDAonCUDA "SDAonCUDA.cpp" "SDAonCUDA.h")
+add_executable (SDAonCUDA "SDAonCUDA.cpp" "SDAonCUDA.h" "test.cu")
 
 # TODO: Add tests and install targets if needed.
 
@@ -22,3 +24,4 @@ enable_language(CUDA)
 FIND_PACKAGE(CUDA REQUIRED)
 INCLUDE_DIRECTORIES( ${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_INCLUDE_DIRS}/../lib/x64)
+set_target_properties(SDAonCUDA PROPERTIES CUDA_ARCHITECTURES "86")
