@@ -23,23 +23,22 @@ public:
     uint32_t  width,
               height,
               frames;
-    BitDepth* sample;
+    BitDepth* data;
 
     Image()
     {
         width = 0;
         height = 0;
         frames = 0;
-        sample = nullptr;
+        data = nullptr;
     }
 
-    Image(Image& pattern)
+    Image(const Image& pattern)
     {
         width = pattern.width;
         height = pattern.height;
         frames = pattern.frames;
-        sample = (BitDepth*)calloc(frames * (uint64_t)height * width, sizeof(BitDepth));
-        //sample = new BitDepth[frames * (uint64_t)height * width];
+        data = static_cast<BitDepth*>(calloc(frames * (uint64_t)height * width, sizeof(BitDepth)));
     }
 
     Image(int _width, int _height, int _frames)
@@ -47,63 +46,57 @@ public:
         width = _width;
         height = _height;
         frames = _frames;
-        sample = (BitDepth*)calloc(frames * (uint64_t)height * width, sizeof(BitDepth));
-        //sample = new BitDepth[frames * (uint64_t)height * width];
+        data = static_cast<BitDepth*>(calloc(frames * (uint64_t)height * width, sizeof(BitDepth)));
     }
 
     ~Image()
     {
-        free(sample);
+        free(data);
     }
 
     BitDepth& Image::operator()(uint32_t z, uint32_t y, uint32_t x)
     {
-        return sample[(z * height + y) * width + x];
+        return data[(z * static_cast<uint64_t>(height) + y) * width + x];
     }
 
     uint64_t Index(uint32_t z, uint32_t y, uint32_t x) const
     {
-        return (z * (uint64_t)height + y) * width + x;
+        return (z * static_cast<uint64_t>(height) + y) * width + x;
     }
 
-    uint64_t GetSize()
+    uint64_t GetSize() const
     {
-        return frames * height * width;
+        return frames * static_cast<uint64_t>(height) * width;
     }
 
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames)
     {
-        if (sample != nullptr)
-            free(sample);
+        if (data != nullptr)
+            free(data);
         width = _width;
         height = _height;
         frames = _frames;
-        sample = (BitDepth*)calloc(frames * (uint64_t)height * width, sizeof(BitDepth));
+        data = static_cast<BitDepth*>(calloc(frames * static_cast<uint64_t>(height) * width, sizeof(BitDepth)));
     }
 
     bool SetSlide(uint32_t frame, BitDepth* newslide)
     {
         if (frame < frames)
         {
-            BitDepth* slidestart = (sample + frame * (uint64_t)width * height);
-            for (uint32_t i = 0; i < width * height; i++)
-            {
-                slidestart[i] = newslide[i];
-            }
+            BitDepth* slidestart = (data + frame * static_cast<uint64_t>(width) * height);
+            memcpy(slidestart, newslide, width * static_cast<uint64_t>(height));
         }
         else
             return false;
         return true;
     }
 
-    BitDepth MaxValue()
+    BitDepth MaxValue() const
     {
-        BitDepth max = sample[0];
-        for (uint32_t z = 0; z < frames; z++)
-            for (uint32_t y = 0; y < height; y++)
-                for (uint32_t x = 0; x < width; x++)
-                    if (max < sample[Index(z, y, x)])
-                        max = sample[Index(z, y, x)];
+        BitDepth max = data[0];
+        for (BitDepth* p = data; p < data + GetSize(); ++p)
+            if (max < *p)
+                max = *p;
         return max;
     }
 
@@ -111,44 +104,23 @@ public:
     {
         BitDepth max = MaxValue();
         max = 1;
-        uint32_t newMax = (1 << sizeof(BitDepth) * 8) - 1;    // 2^size -1
-        for (uint32_t z = 0; z < frames; z++)
-            for (uint32_t y = 0; y < height; y++)
-                for (uint32_t x = 0; x < width; x++)
-                    sample[Index(z, y, x)] = (sample[Index(z, y, x)] * newMax) / max;
+        uint32_t newMax = (uint32_t)(std::numeric_limits<BitDepth>::max);
+
+        for (BitDepth* p = data; p < data + GetSize(); ++p)
+            *p = (*p * newMax) / max;
     }
 
     void Clear()
     {
-        for (uint32_t z = 0; z < frames; z++)
-            for (uint32_t y = 0; y < height; y++)
-                for (uint32_t x = 0; x < width; x++)
-                    sample[Index(z, y, x)] = 0;
+        memset(data, 0, GetSize());
     }
 
     bool Image::operator==(Image& rhs) const
     {
         if (frames == rhs.frames && height == rhs.height && width == rhs.width)
-        {
-            for (uint32_t z = 0; z < frames; z++)
-                for (uint32_t y = 0; y < height; y++)
-                    for (uint32_t x = 0; x < width; x++)
-                        if (sample[Index(z, y, x)] != rhs(z, y, x))
-                            return false;
-            return true;
-        }
-        else
-            return false;
-    }
-
-    uint64_t dSum()
-    {
-        uint64_t result = 0;
-        for (uint32_t z = 0; z < frames; z++)
-            for (uint32_t y = 0; y < height; y++)
-                for (uint32_t x = 0; x < width; x++)
-                    result += sample[Index(z, y, x)];
-        return result;
+            if (memcmp(data, rhs.data, GetSize()) == 0)
+                return true;
+        return false;
     }
 };
 
@@ -171,7 +143,7 @@ struct Coords
         x = _x;
     }
 
-    Coords(Coords& pattern)
+    Coords(const Coords& pattern)
     {
         z = pattern.z;
         y = pattern.y;
@@ -182,9 +154,10 @@ struct Coords
     {
         return (z == rhs.z && y == rhs.y && x == rhs.x);
     }
-    bool Coords::operator!=(Coords& other)
+
+    bool Coords::operator!=(const Coords& rhs)
     {
-        return !(*this == other);
+        return !(*this == rhs);
     }
 
     void Rotate90Z()
@@ -212,15 +185,15 @@ struct Coords
     }
 };
 
-
+template<class BitDepth>
 class HistogramArray
 {
     uint16_t* histogram;
     uint32_t length;
 public:
-    HistogramArray(uint16_t byteDepth)
+    HistogramArray()
     {
-        length = 1 << 8 * byteDepth; // 2 ^ (bitDepth), so cell for every possible value
+        length = std::numeric_limits<BitDepth>::max; // cell for every possible value
         histogram = new uint16_t[length];
         for (uint16_t i = 0; i < length; i++)
             histogram[i] = 0;
@@ -230,16 +203,20 @@ public:
     {
         length = pattern.length;
         histogram = new uint16_t[length];
-        for (uint16_t i = 0; i < length; i++)
-            histogram[i] = pattern.histogram[i];
+        memcpy(histogram, pattern.histogram, length);
     }
 
-    uint16_t& HistogramArray::operator()(uint16_t i)
+    ~HistogramArray()
+    {
+        delete[] histogram;
+    }
+
+    uint16_t& HistogramArray::operator[](uint16_t i) const
     {
         return histogram[i];
     }
     
-    uint32_t Length()
+    uint32_t Length() const
     {
         return length;
     }
@@ -286,7 +263,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
         uint32_t width = TinyTIFFReader_getWidth(tiffr);
         uint32_t height = TinyTIFFReader_getHeight(tiffr);
         uint32_t frames = TinyTIFFReader_countFrames(tiffr);
-        BitDepth* slide = (BitDepth*)calloc(width * (uint64_t)height, sizeof(BitDepth));
+        BitDepth* slide = (BitDepth*)calloc(width * static_cast<uint64_t>(height), sizeof(BitDepth));
         image.SetSize(width, height, frames);
 
         if (TinyTIFFReader_wasError(tiffr)) std::cout << "   ERROR:" << TinyTIFFReader_getLastError(tiffr) << "\n";
@@ -325,7 +302,7 @@ bool SaveTiff(Image<BitDepth>& image, const char* filename)
     {
         for (size_t f = 0; f < image.frames; f++)
         {
-            int res = TinyTIFFWriter_writeImage(tiff, image.sample + (f * image.width * image.height)); //TinyTIFF_Planar   TinyTIFF_Chunky
+            int res = TinyTIFFWriter_writeImage(tiff, image.data + (f * image.width * image.height)); //TinyTIFF_Planar   TinyTIFF_Chunky
             if (res != TINYTIFF_TRUE)
             {
                 std::cout << "ERROR: error writing image data into '" << filename << "'! MESSAGE: " << TinyTIFFWriter_getLastError(tiff) << "\n";
@@ -566,13 +543,13 @@ uint16_t SetUpRadiusDifference(float radius, Coords** DifferenceAddPtr, Coords**
 /// <param name="histogram">Used histogram</param>
 /// <param name="threshold"></param>
 template<class InBitDepth, class OutBitDepth>
-OutBitDepth CalculateDominance(InBitDepth pixel, HistogramArray& histogram, int threshold)
+OutBitDepth CalculateDominance(InBitDepth pixel, HistogramArray<OutBitDepth>& histogram, int threshold)
 {
     OutBitDepth result = 0;
 
     for (uint32_t i = pixel + threshold; i < histogram.Length(); i++) //add numbers of pixels that are >= pixel + threshold
     {
-        uint16_t volume = histogram(i);
+        uint16_t volume = histogram[i];
         result += volume;
     }
     return result;
@@ -597,30 +574,30 @@ void FlyingHistogram2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, flo
         DiffRemX[i].Rotate90z();
     }
 
-    HistogramArray histogramY = HistogramArray(sizeof(OutBitDepth));
+    HistogramArray<OutBitDepth> histogramY = HistogramArray<OutBitDepth>();
 
     for (int16_t j = -iradius; j <= iradius; j++)
         for (int16_t i = -iradius; i <= iradius; i++)
             if (i * i + j * j <= radius * radius)
-                histogramY(image(0, iradius + j, iradius + i))++; // compute first histogram
+                histogramY[image(0, iradius + j, iradius + i)]++; // compute first histogram
     
     for (uint32_t y = iradius; y < height - iradius; y++)
     {
         if (y != iradius)
             for (uint32_t i = 0; i < DiffLen; i++)
             {
-                histogramY(image(0, y + DiffRemY[i].y, iradius + DiffRemY[i].x))--;
-                histogramY(image(0, y + DiffAddY[i].y, iradius + DiffAddY[i].x))++;
+                histogramY[image(0, y + DiffRemY[i].y, iradius + DiffRemY[i].x)]--;
+                histogramY[image(0, y + DiffAddY[i].y, iradius + DiffAddY[i].x)]++;
             }
 
-        HistogramArray histogramX = HistogramArray(histogramY);
+        HistogramArray<OutBitDepth> histogramX = HistogramArray(histogramY);
         for (uint32_t x = iradius; x < width - iradius; x++)
         {
             if (x != iradius)
                 for (uint32_t i = 0; i < DiffLen; i++)
                 {
-                    histogramX(image(0, y + DiffRemX[i].y, x + DiffRemX[i].x))--;
-                    histogramX(image(0, y + DiffAddX[i].y, x + DiffAddX[i].x))++;
+                    histogramX[image(0, y + DiffRemX[i].y, x + DiffRemX[i].x)]--;
+                    histogramX[image(0, y + DiffAddX[i].y, x + DiffAddX[i].x)]++;
                 }
             output(0, y, x) = CalculateDominance<InBitDepth, OutBitDepth>(image(0, y, x), histogramX, threshold);
         }
@@ -649,41 +626,41 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
         DiffRemX[i].Rotate90y();
     }
 
-    HistogramArray histogramZ = HistogramArray(sizeof(OutBitDepth));
+    HistogramArray<OutBitDepth> histogramZ = HistogramArray<OutBitDepth>();
 
     for (int16_t k = -iradius; k <= iradius; k++)
         for (int16_t j = -iradius; j <= iradius; j++)
             for (int16_t i = -iradius; i <= iradius; i++)
                 if (i * i + j * j + k * k <= radius * radius)
-                    histogramZ(image(iradius + k, iradius + j, iradius + i))++; // compute first histogram
+                    histogramZ[image(iradius + k, iradius + j, iradius + i)]++; // compute first histogram
 
     for (uint32_t z = iradius; z < frames - iradius; z++)
     {
         if(z != iradius)
             for (uint32_t i = 0; i < DiffLen; i++)      // compute by removing and adding delta pixels to histogram
             {
-                histogramZ(image(z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, iradius + DiffRemZ[i].x))--;
-                histogramZ(image(z + DiffAddZ[i].z, iradius + DiffAddZ[i].y, iradius + DiffAddZ[i].x))++;
+                histogramZ[image(z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, iradius + DiffRemZ[i].x)]--;
+                histogramZ[image(z + DiffAddZ[i].z, iradius + DiffAddZ[i].y, iradius + DiffAddZ[i].x)]++;
             }
 
-        HistogramArray histogramY = HistogramArray(histogramZ);
+        HistogramArray<OutBitDepth> histogramY = HistogramArray<OutBitDepth>(histogramZ);
         for (uint32_t y = iradius; y < height - iradius; y++)
         {
             if (y != iradius)
                 for (uint32_t i = 0; i < DiffLen; i++)
                 {
-                    histogramY(image(z + DiffRemY[i].z, y + DiffRemY[i].y, iradius + DiffRemY[i].x))--;
-                    histogramY(image(z + DiffAddY[i].z, y + DiffAddY[i].y, iradius + DiffAddY[i].x))++;
+                    histogramY[image(z + DiffRemY[i].z, y + DiffRemY[i].y, iradius + DiffRemY[i].x)]--;
+                    histogramY[image(z + DiffAddY[i].z, y + DiffAddY[i].y, iradius + DiffAddY[i].x)]++;
                 }
 
-            HistogramArray histogramX = HistogramArray(histogramY);
+            HistogramArray<OutBitDepth> histogramX = HistogramArray<OutBitDepth>(histogramY);
             for (uint32_t x = iradius; x < width - iradius; x++)
             {
                 if (x != iradius)
                     for (uint32_t i = 0; i < DiffLen; i++)
                     {
-                        histogramX(image(z + DiffRemX[i].z, y + DiffRemX[i].y, x + DiffRemX[i].x))--;
-                        histogramX(image(z + DiffAddX[i].z, y + DiffAddX[i].y, x + DiffAddX[i].x))++;
+                        histogramX[image(z + DiffRemX[i].z, y + DiffRemX[i].y, x + DiffRemX[i].x)]--;
+                        histogramX[image(z + DiffAddX[i].z, y + DiffAddX[i].y, x + DiffAddX[i].x)]++;
                     }
                 output(z, y, x) = CalculateDominance<InBitDepth, OutBitDepth>(image(z, y, x), histogramX, threshold);
             }
@@ -766,8 +743,8 @@ int main()
         Image<uint8_t> out = Image<uint8_t>(croppedImage);
         Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
 
-        uint8_t* inptr = croppedImage.sample,
-               * outptr = out.sample;
+        uint8_t* inptr = croppedImage.data,
+               * outptr = out.data;
 
         auto start = std::chrono::high_resolution_clock::now();
         GPU::SDA(inptr, outptr, radius, thresh, out.frames, out.height, out.width);
