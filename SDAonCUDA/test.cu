@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cmath>
 
 #include "device_launch_parameters.h"
 #include "SDAonCUDA.h"
@@ -60,9 +61,6 @@ namespace GPU
 	//void GpuSDA(InBitDepth* image, OutBitDepth* output, float radius, int threshold)
 	void SDA(uint8_t* input, uint8_t* output, float radius, int threshold, uint32_t frames, uint32_t height, uint32_t width)
 	{
-		//cudaDeviceProp prop;
-		//cudaGetDeviceProperties(&prop, 0);
-		//std::cout << "\ngrid:" << prop.maxGridSize[0] << "\n" << prop.maxGridSize[1] << "\n" << prop.maxGridSize[2] << "\n" << prop.maxSurface3D[0];
 		uint64_t size = frames * height * width;
 		uint8_t* dev_Input,* dev_Output;
 
@@ -71,7 +69,7 @@ namespace GPU
 
 		cudaMemcpy(dev_Input, input, size * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
-		uint16_t iradius = (uint16_t)radius + 0.999;
+		uint16_t iradius = std::ceil(radius);
 
 		//dim3 numBlocks(64, 8, 8);
 		//dim3 threadsPerBlock(8, 8, 8);

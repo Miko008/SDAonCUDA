@@ -11,17 +11,13 @@ add_executable (SDAonCUDA "SDAonCUDA.cpp" "SDAonCUDA.h" "test.cu")
 # TODO: Add tests and install targets if needed.
 
 # TinyTIFF #
-include_directories("C:/Program Files (x86)/libTinyTIFF/lib/cmake/TinyTIFF")
-
-set(TinyTIFF_DIR "C:/Program Files (x86)/libTinyTIFF/lib/cmake/TinyTIFF")
-
 find_package(TinyTIFF REQUIRED)
-
+include_directories(${TinyTIFF_DIR})
 target_link_libraries(SDAonCUDA TinyTIFF)
 
 # CUDA #
 enable_language(CUDA) 
-FIND_PACKAGE(CUDA REQUIRED)
-INCLUDE_DIRECTORIES( ${CUDA_INCLUDE_DIRS})
+find_package(CUDA REQUIRED)
+include_directories( ${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_INCLUDE_DIRS}/../lib/x64)
 set_target_properties(SDAonCUDA PROPERTIES CUDA_ARCHITECTURES "86")

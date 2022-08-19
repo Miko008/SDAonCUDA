@@ -3,17 +3,18 @@
 
 #include <cstring>
 #include <chrono>
+#include <cmath>
 
 #include "SDAonCUDA.h"
 #include "tinytiffreader.h"
 #include "tinytiffwriter.h"
 #include "test.h"
 
-enum Direction
+enum class Direction
 {
-    Zdir = 0,
-    Ydir = 1,
-    Xdir = 2
+    Z = 0,
+    Y = 1,
+    X = 2
 };
 
 template<class BitDepth>
@@ -38,7 +39,8 @@ public:
         width = pattern.width;
         height = pattern.height;
         frames = pattern.frames;
-        data = static_cast<BitDepth*>(calloc(frames * (uint64_t)height * width, sizeof(BitDepth)));
+        data = new BitDepth[GetSize()];
+        memset(data, 0, GetSize());
     }
 
     Image(int _width, int _height, int _frames)
@@ -46,12 +48,13 @@ public:
         width = _width;
         height = _height;
         frames = _frames;
-        data = static_cast<BitDepth*>(calloc(frames * (uint64_t)height * width, sizeof(BitDepth)));
+        data = new BitDepth[GetSize()];
+        memset(data, 0, GetSize());
     }
 
     ~Image()
     {
-        free(data);
+        delete[] data;
     }
 
     BitDepth& Image::operator()(uint32_t z, uint32_t y, uint32_t x)
@@ -72,11 +75,11 @@ public:
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames)
     {
         if (data != nullptr)
-            free(data);
+            delete[] data;
         width = _width;
         height = _height;
         frames = _frames;
-        data = static_cast<BitDepth*>(calloc(frames * static_cast<uint64_t>(height) * width, sizeof(BitDepth)));
+        data = new BitDepth[GetSize()];
     }
 
     bool SetSlide(uint32_t frame, BitDepth* newslide)
@@ -103,9 +106,7 @@ public:
     void Normalize()
     {
         BitDepth max = MaxValue();
-        max = 1;
         uint32_t newMax = (uint32_t)(std::numeric_limits<BitDepth>::max);
-
         for (BitDepth* p = data; p < data + GetSize(); ++p)
             *p = (*p * newMax) / max;
     }
@@ -117,10 +118,7 @@ public:
 
     bool Image::operator==(Image& rhs) const
     {
-        if (frames == rhs.frames && height == rhs.height && width == rhs.width)
-            if (memcmp(data, rhs.data, GetSize()) == 0)
-                return true;
-        return false;
+        return frames == rhs.frames && height == rhs.height && width == rhs.width && !memcmp(data, rhs.data, GetSize());
     }
 };
 
@@ -193,10 +191,9 @@ class HistogramArray
 public:
     HistogramArray()
     {
-        length = std::numeric_limits<BitDepth>::max; // cell for every possible value
+        length = 1 + (uint32_t)std::numeric_limits<BitDepth>::max();
         histogram = new uint16_t[length];
-        for (uint16_t i = 0; i < length; i++)
-            histogram[i] = 0;
+        memset(histogram, 0, length);
     }
 
     HistogramArray(const HistogramArray &pattern)
@@ -263,7 +260,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
         uint32_t width = TinyTIFFReader_getWidth(tiffr);
         uint32_t height = TinyTIFFReader_getHeight(tiffr);
         uint32_t frames = TinyTIFFReader_countFrames(tiffr);
-        BitDepth* slide = (BitDepth*)calloc(width * static_cast<uint64_t>(height), sizeof(BitDepth));
+        BitDepth* slide = new BitDepth[width * static_cast<uint64_t>(height)];
         image.SetSize(width, height, frames);
 
         if (TinyTIFFReader_wasError(tiffr)) std::cout << "   ERROR:" << TinyTIFFReader_getLastError(tiffr) << "\n";
@@ -271,7 +268,6 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
 
         for (uint32_t frame = 0; ok; frame++)
         {
-            //std::cout << "frame: " << frame << std::endl;
             TinyTIFFReader_getSampleData(tiffr, slide, 0);
             image.SetSlide(frame, slide);
 
@@ -283,7 +279,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
             if (!TinyTIFFReader_readNext(tiffr))
                 break;
         }
-
+        delete[] slide;
         std::cout << "    read and checked all frames: " << ((ok) ? std::string("SUCCESS") : std::string("ERROR")) << " \n";
     }
     TinyTIFFReader_close(tiffr);
@@ -375,7 +371,7 @@ void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int
     uint32_t width = image.width,
              height = image.height,
              frames = image.frames;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
 
     for (uint32_t z = iradius; z < frames - iradius; z++)
     {
@@ -396,7 +392,7 @@ void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float r
     uint32_t width = image.width,
              height = image.height,
              frames = image.frames;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
 
     for (uint32_t z = 0; z < frames; z++)
     {
@@ -419,7 +415,7 @@ void SDAborderless2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
 {
     uint32_t width = image.width,
         height = image.height;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
 
     for (uint32_t y = 0; y < height; y++)
         for (uint32_t x = 0; x < width; x++)
@@ -427,27 +423,35 @@ void SDAborderless2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
                 if (0 <= y + j && y + j < height)
                     for (int16_t i = -iradius; i <= iradius; i++)
                         if (i * i + j * j <= radius * radius && 0 <= x + i && x + i < width)
-                            if (image(1, y + j, x + i) >= image(1, y, x) + threshold)
-                                output(1, y, x)++;
+                            if (image(0, y + j, x + i) >= image(0, y, x) + threshold)
+                                output(0, y, x)++;
 }
 
-//template<class InBitDepth, class OutBitDepth>
-//void SinglePixelDominance(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold, uint32_t z, uint32_t y, uint32_t x)
+//void DifferenceCoordsToArray(uint16_t numberOfDifs)
 //{
-//    for (int16_t k = -iradius; k <= iradius; k++)
-//        if (0 <= z + k && z + k < frames)
-//            for (int16_t j = -iradius; j <= iradius; j++)
-//                if (0 <= y + j && y + j < height)
-//                    for (int16_t i = -iradius; i <= iradius; i++)
-//                        if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
-//                            if (image(z + k, y + j, x + i) >= image(z, y, x) + threshold)
-//                                output(z, y, x)++;
+//
+//    Coords* DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
+//    Coords* DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
+//    *DifferenceAddPtr = DifferenceAdd;
+//    *DifferenceRemPtr = DifferenceRem;
+//
+//    uint16_t addIndex = 0,
+//        remIndex = 0;
+//
+//    for (int16_t k = 0; k < margin; k++)
+//        for (int16_t j = 0; j < margin; j++)
+//            for (int16_t i = 0; i < margin; i++)
+//            {
+//                if (tempArray(k, j, i) == 1)
+//                    DifferenceRem[remIndex++] = Coords(k - z, j - y, i - x);
+//                if (tempArray(k, j, i) == 2)
+//                    DifferenceAdd[addIndex++] = Coords(k - z, j - y, i - x);
+//            }
 //}
-
 
 uint16_t SetUpRadiusDifference2D(float radius, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
 {
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
     uint16_t margin = iradius * 2 + 2;              //to fit 2 offset spheres
     uint16_t numberOfDifs = 0;                      //number of delta pixels
 
@@ -491,7 +495,7 @@ uint16_t SetUpRadiusDifference2D(float radius, Coords** DifferenceAddPtr, Coords
 
 uint16_t SetUpRadiusDifference(float radius, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
 {
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
     uint16_t margin = iradius * 2 + 2;              //to fit 2 offset spheres
     uint16_t numberOfDifs = 0;                      //number of delta pixels
 
@@ -536,6 +540,72 @@ uint16_t SetUpRadiusDifference(float radius, Coords** DifferenceAddPtr, Coords**
     return numberOfDifs;
 }
 
+uint16_t SetUpRadiusDifferenceAnisotropic(float radius, float radiusZ, Direction dir, Coords** DifferenceAddPtr, Coords** DifferenceRemPtr)
+{
+    uint16_t iradius = std::ceil(radius);
+    uint16_t iradiusZ = std::ceil(radiusZ);
+    if (iradiusZ > iradius)
+        iradius = iradiusZ;
+
+    uint16_t margin = iradius * 2 + 3;                          //to fit 2 offset spheres
+    uint16_t numberOfDifs = 0;                                  //number of delta pixels
+
+
+    Image<uint8_t> tempArray = Image<uint8_t>(margin, margin, margin);      //sandbox
+    uint16_t z = iradius,
+             y = iradius,
+             x = iradius;
+
+    float asqr = radius * radius;
+    float csqr = radiusZ * radiusZ;
+
+    for (uint8_t origin = 0; origin < 2; origin++)  //origin offset + id to mark 2 offset spheres
+    {
+        switch (dir)
+        {
+        default:
+        case Direction::Z:
+            z = iradius + origin;
+            break;
+        case Direction::Y:
+            y = iradius + origin;
+            break;
+        case Direction::X:
+            x = iradius + origin;
+            break;
+        }
+        numberOfDifs = 0;
+        for (int16_t k = -iradius; k <= iradius; k++)
+            for (int16_t j = -iradius; j <= iradius; j++)
+                for (int16_t i = -iradius; i <= iradius; i++)
+                    if ((asqr * k * k) + (csqr * (i * i + j * j)) <= asqr * csqr)   // spheroid squashed on z axis
+                    {
+                        if (tempArray(k + z, j + y, i + x) == 0)
+                            numberOfDifs++;
+                        tempArray(k + z, j + y, i + x) += origin + 1;
+                    }
+    }
+
+    Coords* DifferenceAdd = new Coords[numberOfDifs];   //indexes relative to new step pixel to add to histogram
+    Coords* DifferenceRem = new Coords[numberOfDifs];   //indexes relative to new step pixel to remove from histogram
+    *DifferenceAddPtr = DifferenceAdd;
+    *DifferenceRemPtr = DifferenceRem;
+
+    uint16_t addIndex = 0,
+             remIndex = 0;
+
+    for (int16_t k = 0; k < margin; k++)
+        for (int16_t j = 0; j < margin; j++)
+            for (int16_t i = 0; i < margin; i++)
+            {
+                if (tempArray(k, j, i) == 1)
+                    DifferenceRem[remIndex++] = Coords(k - z, j - y, i - x);
+                if (tempArray(k, j, i) == 2)
+                    DifferenceAdd[addIndex++] = Coords(k - z, j - y, i - x);
+            }
+    return numberOfDifs;
+}
+
 /// <summary>
 /// 
 /// </summary>
@@ -543,24 +613,52 @@ uint16_t SetUpRadiusDifference(float radius, Coords** DifferenceAddPtr, Coords**
 /// <param name="histogram">Used histogram</param>
 /// <param name="threshold"></param>
 template<class InBitDepth, class OutBitDepth>
-OutBitDepth CalculateDominance(InBitDepth pixel, HistogramArray<OutBitDepth>& histogram, int threshold)
+OutBitDepth CalculateDominanceLessIntense(InBitDepth pixel, HistogramArray<OutBitDepth>& histogram, int threshold)
+{
+    OutBitDepth result = 0;
+
+    for (uint32_t i = 0; i < pixel + threshold; i++) //add numbers of pixels that are >= pixel + threshold
+        result += histogram[i];
+
+    return result;
+}
+
+/// <summary>
+/// 
+/// </summary>
+/// <param name="pixel">Currently considered input pixel</param>
+/// <param name="histogram">Used histogram</param>
+/// <param name="threshold"></param>
+template<class InBitDepth, class OutBitDepth>
+OutBitDepth CalculateDominanceMoreIntense(InBitDepth pixel, HistogramArray<OutBitDepth>& histogram, int threshold)
 {
     OutBitDepth result = 0;
 
     for (uint32_t i = pixel + threshold; i < histogram.Length(); i++) //add numbers of pixels that are >= pixel + threshold
-    {
-        uint16_t volume = histogram[i];
-        result += volume;
-    }
+        result += histogram[i];
+
     return result;
 }
 
+bool sphereCondition(int16_t i, int16_t j, int16_t k, float asqr, float csqr)
+{
+    return (i * i + j * j + k * k <= asqr);
+}
+
+bool anisotropicCondition(int16_t i, int16_t j, int16_t k, float asqr, float csqr)
+{
+    return (asqr * k * k + csqr * (i * i + j * j) <= asqr * csqr);
+}
+
 template<class InBitDepth, class OutBitDepth>
-void FlyingHistogram2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
+void FlyingHistogram2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold, bool moreIntense)
 {
     uint32_t width = image.width,
              height = image.height;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    uint16_t iradius = std::ceil(radius);
+
+    auto CalculateDominance = moreIntense ? CalculateDominanceMoreIntense<InBitDepth, OutBitDepth> :
+        CalculateDominanceMoreIntense<InBitDepth, OutBitDepth>;
 
     Coords* DiffAddY, * DiffRemY;  //array of coords of delta pixels
     uint16_t DiffLen = SetUpRadiusDifference2D(radius, &DiffAddY, &DiffRemY); //number of delta pixels
@@ -602,41 +700,70 @@ void FlyingHistogram2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, flo
             output(0, y, x) = CalculateDominance<InBitDepth, OutBitDepth>(image(0, y, x), histogramX, threshold);
         }
     }
+    delete[] DiffAddX, DiffAddY, DiffRemX, DiffRemY;
 }
 template<class InBitDepth, class OutBitDepth>
-void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
+void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, float radiusZ, int threshold, bool moreIntense)
 {
     uint32_t width = image.width,
              height = image.height,
              frames = image.frames;
-    uint16_t iradius = (uint16_t)(radius + 0.999);  //cheaply ceiled radius
+    
+    bool anisotropic = (radius != radiusZ) ? true : false;
 
-    Coords* DiffAddZ, * DiffRemZ;  //array of coords of delta pixels
-    uint16_t DiffLen = SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ); //number of delta pixels
-    Coords* DiffAddY = new Coords[DiffLen], * DiffRemY = new Coords[DiffLen],
-          * DiffAddX = new Coords[DiffLen], * DiffRemX = new Coords[DiffLen];
+    uint16_t iradius = std::ceil(radius);
+    uint16_t iradiusZ = std::ceil(radiusZ);
 
-    for (uint16_t i = 0; i < DiffLen; i++)  // just rotate vectors instead of generating new
+    auto CalculateDominance = moreIntense ? CalculateDominanceMoreIntense<InBitDepth, OutBitDepth> :
+        CalculateDominanceMoreIntense<InBitDepth, OutBitDepth>;
+
+    uint16_t DiffLen = 0, DiffLenZ = 0;
+    Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;   //array of coords of delta pixels
+
+    if (!anisotropic)
     {
-        DiffAddX[i] = DiffAddY[i] = DiffAddZ[i]; 
-        DiffRemX[i] = DiffRemY[i] = DiffRemZ[i];
-        DiffAddY[i].Rotate90x();
-        DiffRemY[i].Rotate90x();
-        DiffAddX[i].Rotate90y();
-        DiffRemX[i].Rotate90y();
+        DiffLen = SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ); //number of delta pixels
+        Coords *DiffAddY = new Coords[DiffLen], *DiffRemY = new Coords[DiffLen],
+               *DiffAddX = new Coords[DiffLen], *DiffRemX = new Coords[DiffLen];
+
+        for (uint16_t i = 0; i < DiffLen; i++)  // just rotate vectors instead of generating new
+        {
+            DiffAddX[i] = DiffAddY[i] = DiffAddZ[i];
+            DiffRemX[i] = DiffRemY[i] = DiffRemZ[i];
+            DiffAddY[i].Rotate90x();
+            DiffRemY[i].Rotate90x();
+            DiffAddX[i].Rotate90y();
+            DiffRemX[i].Rotate90y();
+        }
     }
+    else
+    {
+        DiffLenZ = SetUpRadiusDifferenceAnisotropic(radius, radiusZ, Direction::Z, &DiffAddZ, &DiffRemZ); //number of delta pixels
+        DiffLen = SetUpRadiusDifferenceAnisotropic(radius, radiusZ, Direction::Y, &DiffAddY, &DiffRemY);
+        SetUpRadiusDifferenceAnisotropic(radius, radiusZ, Direction::X, &DiffAddX, &DiffRemX);
+    }
+
 
     HistogramArray<OutBitDepth> histogramZ = HistogramArray<OutBitDepth>();
 
+    float asqr = radius * radius;
+    float csqr = radiusZ * radiusZ;
+
+    auto firstHistogramCondition = anisotropic ? anisotropicCondition : sphereCondition;
+
     for (int16_t k = -iradius; k <= iradius; k++)
+    {
+        std::cout << k << " ";
         for (int16_t j = -iradius; j <= iradius; j++)
             for (int16_t i = -iradius; i <= iradius; i++)
-                if (i * i + j * j + k * k <= radius * radius)
-                    histogramZ[image(iradius + k, iradius + j, iradius + i)]++; // compute first histogram
-
-    for (uint32_t z = iradius; z < frames - iradius; z++)
+                if (firstHistogramCondition(i, j, k, asqr, csqr))
+                    histogramZ[image(iradiusZ + k, iradius + j, iradius + i)]++; // compute first histogram
+    }
+    std::cout << "\n";
+    for (uint32_t z = iradiusZ; z < frames - iradius; z++)
     {
-        if(z != iradius)
+        std::cout << z << " ";
+        if(z != iradiusZ)
             for (uint32_t i = 0; i < DiffLen; i++)      // compute by removing and adding delta pixels to histogram
             {
                 histogramZ[image(z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, iradius + DiffRemZ[i].x)]--;
@@ -662,13 +789,12 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
                         histogramX[image(z + DiffRemX[i].z, y + DiffRemX[i].y, x + DiffRemX[i].x)]--;
                         histogramX[image(z + DiffAddX[i].z, y + DiffAddX[i].y, x + DiffAddX[i].x)]++;
                     }
-                output(z, y, x) = CalculateDominance<InBitDepth, OutBitDepth>(image(z, y, x), histogramX, threshold);
+                output(z, y, x) = CalculateDominance(image(z, y, x), histogramX, threshold);
             }
         }
     }
+    delete[] DiffAddZ, DiffRemZ, DiffAddY, DiffRemY, DiffAddX, DiffRemX;
 }
-
-
 
 int main()
 {
@@ -683,9 +809,9 @@ int main()
     //float radius = 3.5;
     //
     //Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;  //array of coords of delta pixels
-    //uint16_t DiffLen = SetUpRadiusDifference(radius, Zdir, &DiffAddZ, &DiffRemZ); //number of delta pixels
-    //SetUpRadiusDifference(radius, Ydir, &DiffAddY, &DiffRemY);
-    //SetUpRadiusDifference(radius, Xdir, &DiffAddX, &DiffRemX);
+    //uint16_t DiffLen = SetUpRadiusDifference(radius, Z, &DiffAddZ, &DiffRemZ); //number of delta pixels
+    //SetUpRadiusDifference(radius, Y, &DiffAddY, &DiffRemY);
+    //SetUpRadiusDifference(radius, X, &DiffAddX, &DiffRemX);
     //
     //bool same;
     //for (size_t i = 0; i < DiffLen; i++)
@@ -738,10 +864,12 @@ int main()
 
     for (int i = 0; i < 1; i++)
     {
-        float radius = 2.5;
-        int thresh = 40 + 5 * i;
+        float radius = 10;
+        float radiusZ = 5;
+        int thresh = 40;
         Image<uint8_t> out = Image<uint8_t>(croppedImage);
         Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
+        Image<uint8_t> out3 = Image<uint8_t>(croppedImage);
 
         uint8_t* inptr = croppedImage.data,
                * outptr = out.data;
@@ -753,9 +881,16 @@ int main()
         auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
         std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
 
+        //auto startSDA = std::chrono::high_resolution_clock::now();
+        //SDAborderless(croppedImage, out2, radius, thresh);
+        //auto finishSDA = std::chrono::high_resolution_clock::now();
+
+        //auto millisecondsSDA = std::chrono::duration_cast<std::chrono::milliseconds>(finishSDA - startSDA);
+        //std::cout << "\nTime Elapsed:" << millisecondsSDA.count() << "ms\n";
+
         auto startFH = std::chrono::high_resolution_clock::now();
-        SDAborderless(croppedImage, out2, radius, thresh);
-        //FlyingHistogram(croppedImage, out2, radius, thresh);
+        //FlyingHistogram(croppedImage, out3, radius, thresh);
+        FlyingHistogram(croppedImage, out3, radius, radiusZ, thresh, true);
         auto finishFH = std::chrono::high_resolution_clock::now();
 
         auto millisecondsFH = std::chrono::duration_cast<std::chrono::milliseconds>(finishFH - startFH);
@@ -765,12 +900,16 @@ int main()
             std::cout << "\nSame outputs\n";
         else
             std::cout << "\nDifferent outputs\n";
+        if (out == out3)
+            std::cout << "\nSame outputs\n";
+        else
+            std::cout << "\nDifferent outputs\n";
 
         out.Normalize();
         char buffer[128] = { 0 };
-        sprintf_s(buffer, "%s %i - %i %s", (file + output).c_str(), (int)(radius * 100), thresh, type.c_str());
+        sprintf_s(buffer, "%s aaa%i - %i %s", (file + output).c_str(), (int)(radius * 100), thresh, type.c_str());
         std::cout << '\n' << buffer << '\n';
-        SaveTiff(out, buffer);
+        SaveTiff(out3, buffer);
     }
 
     std::cout << "Finished\n";
