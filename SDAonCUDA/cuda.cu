@@ -2,7 +2,7 @@
 #include <cmath>
 
 #include "device_launch_parameters.h"
-#include "SDAonCUDA.h"
+#include "main.h"
 
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }

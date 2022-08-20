@@ -6,7 +6,7 @@ project (SDAonCUDA LANGUAGES CUDA CXX)
 
 
 # Add source to this project's executable.
-add_executable (SDAonCUDA "SDAonCUDA.cpp" "SDAonCUDA.h" "test.cu")
+add_executable (SDAonCUDA "main.cpp" "main.h" "cuda.cu")
 
 # TODO: Add tests and install targets if needed.
 

@@ -5,10 +5,10 @@
 #include <chrono>
 #include <cmath>
 
-#include "SDAonCUDA.h"
+#include "main.h"
 #include "tinytiffreader.h"
 #include "tinytiffwriter.h"
-#include "test.h"
+#include "cuda.h"
 
 enum class Direction
 {
