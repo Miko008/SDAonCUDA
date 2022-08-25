@@ -36,7 +36,7 @@ namespace GPU
 								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
 									out[(z * height + y) * width + x]++;
 	}
-	__global__ void SDAKernel1D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold, uint64_t size)
+	__global__ void SDAKernel1D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float rsqr, uint16_t iradius, int threshold, uint64_t size)
 	{
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -53,7 +53,7 @@ namespace GPU
 				for (int16_t j = -iradius; j <= iradius; j++)
 					if (0 <= y + j && y + j < height)
 						for (int16_t i = -iradius; i <= iradius; i++)
-							if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= rsqr)
 								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
 									out[(z * height + y) * width + x]++;
 	}
@@ -78,7 +78,7 @@ namespace GPU
 		dim3 numBlocks(size / 1024 + 1, 1, 1);
 		dim3 threadsPerBlock(1024, 1, 1);
 		SDAKernel1D<<<numBlocks, threadsPerBlock>>>
-			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius, iradius, threshold, size);
+			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size);
 
 		cudaDeviceSynchronize();
 
