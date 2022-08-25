@@ -665,43 +665,16 @@ int main()
         Image<uint8_t> out3 = Image<uint8_t>(croppedImage);
 
         auto start = std::chrono::high_resolution_clock::now();
-        GPU::SDA(croppedImage, out, radius, thresh);
-        //GPU::FlyingHistogram(croppedImage, out, radius, thresh, true);
+        //GPU::SDA(croppedImage, out, radius, thresh);
+        GPU::FlyingHistogram(croppedImage, out, radius, thresh, true);
         auto finish = std::chrono::high_resolution_clock::now();
 
         auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
         std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
 
-        //auto startSDA = std::chrono::high_resolution_clock::now();
-        //SDAborderless(croppedImage, out2, radius, thresh);
-        //auto finishSDA = std::chrono::high_resolution_clock::now();
-
-        //auto millisecondsSDA = std::chrono::duration_cast<std::chrono::milliseconds>(finishSDA - startSDA);
-        //std::cout << "\nTime Elapsed:" << millisecondsSDA.count() << "ms\n";
-
-        auto startFH = std::chrono::high_resolution_clock::now();
-        //FlyingHistogram(croppedImage, out3, radius, thresh);
-        FlyingHistogram(croppedImage, out3, radius, radiusZ, thresh, true, true);
-        auto finishFH = std::chrono::high_resolution_clock::now();
-
-        auto millisecondsFH = std::chrono::duration_cast<std::chrono::milliseconds>(finishFH - startFH);
-        std::cout << "\nTime Elapsed:" << millisecondsFH.count() << "ms\n";
-
-        //if (out == out2)\
-            std::cout << "\nSame outputs\n";\
-        else\
-            std::cout << "\nDifferent outputs\n";
-        if (out == out3)
-            std::cout << "\nSame outputs\n";
-        else
-            std::cout << "\nDifferent outputs\n";
-
-        //out.Normalize();
         std::cout << "\ndebug sum: " << out.dGetSum();
-        char buffer[128] = { 0 };
-        sprintf_s(buffer, "%s qqq%i - %i %s", (file + output).c_str(), (int)(radius * 100), thresh, type.c_str());
-        std::cout << '\n' << buffer << '\n';
-        SaveTiff(out, buffer);
+
+        SaveTiff(out, (file + "test.tiff").c_str());
     }
 
     std::cout << "Finished\n";

@@ -60,7 +60,7 @@ namespace GPU
 
 	//Todo fix arg templates - linker error
 	//template<class InBitDepth, class OutBitDepth>
-	void SDA(Image<uint8_t> input, Image<uint8_t> output, float radius, int threshold)
+	void SDA(Image<uint8_t> &input, Image<uint8_t> &output, float radius, int threshold)
 	{
 		uint8_t* devInput,* devOutput;
 		uint64_t size = input.GetSize();
@@ -88,29 +88,34 @@ namespace GPU
 		cudaFree(devOutput);
 	}
 
-	__device__ uint8_t CalculateDominanceOverMoreIntense(uint8_t pixel, uint16_t* histogram, uint16_t diffLen, int threshold, uint16_t* result)
+	__device__ uint8_t CalculateDominanceOverMoreIntense(int intensity, uint8_t* histogram, uint16_t diffLen)
 	{
-		if (pixel + threshold <= 0)
-			return 0;
+		uint16_t result = 0;
+		uint32_t end = intensity > diffLen ? diffLen : intensity;    //select end value not higher than diffLen
 
-		for (uint32_t i = 0; i < pixel + threshold; i++)	//add numbers of pixels that are >= pixel + threshold
-			*result += histogram[i];
+		for (uint32_t i = 0; i < end; i++)    //add numbers of pixels that are >= pixel + threshold
+			result += histogram[i];
+
+		return result;
 	}
 
 
-	__device__ uint8_t CalculateDominanceOverLessIntense(uint8_t pixel, uint16_t* histogram, uint16_t diffLen, int threshold, uint16_t* result)
+	__device__ uint8_t CalculateDominanceOverLessIntense(int intensity, uint8_t* histogram, uint16_t diffLen)
 	{
-		uint32_t start = pixel + threshold > 0 ? pixel + threshold : 0;
+		uint16_t result = 0;
+		uint32_t start = intensity > 0 ? intensity : 0;
 
 		for (uint32_t i = start; i < diffLen; i++)			//add numbers of pixels that are >= pixel + threshold
-			*result += histogram[i];
+			result += histogram[i];
+
+		return result;
 	}
 
 
-	__global__ void FHFirstHistogramKernel(uint8_t* in, uint16_t* histogram, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold)
+	__global__ void FHFirstHistogramKernel(uint8_t* in, uint8_t* histogram, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold)
 	{
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
-		uint32_t x = (tempid) % width;
+		uint32_t x = tempid % width;
 
 		if (tempid < iradius || tempid > width - iradius)		//skip margins
 			return;
@@ -121,39 +126,37 @@ namespace GPU
 			for (int16_t j = -iradius; j <= iradius; j++)
 				for (int16_t i = -iradius; i <= iradius; i++)
 					if (i * i + j * j + k * k <= asqr)
-						histogram[x * width +												//number of histogram
+						histogram[histogramWidth * x +                                  //number of histogram
 						in[((iradius + k) * height + iradius + j) * width + x + i]]++;		//value of intensity to histogram 
 	}
 
+	__device__ uint32_t CalculateIndex(Coords &Diff, uint32_t z, uint32_t y, uint32_t x, uint32_t height, uint32_t width)
+	{
+		return ((z + Diff.z) * height + y + Diff.y) * width + x + Diff.x;
+	}
 
-	__global__ void FHKernel(uint8_t* in, uint8_t* out, uint16_t* histogram, Coords* DiffRemZ, Coords* DiffAddZ, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, int threshold, bool moreIntense)
+	__global__ void FHKernel(uint8_t* in, uint8_t* out, uint8_t* histogram, uint16_t histogramWidth, Coords* DiffRemZ, Coords* DiffAddZ, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, int threshold, bool moreIntense)
 	{
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
-		uint32_t x = (tempid) % width;
+		uint32_t x = tempid % width;
 
-		if (x < iradius || tempid > width)		//skip margins
+		if (x < iradius || tempid > width - iradius)		//skip margins
 			return;
-		//tempid /= width;\
-		uint32_t y = tempid % height;\
-		tempid /= height;\
-		uint32_t z = tempid % frames;
 
 		auto CalculateDominance = moreIntense ? CalculateDominanceOverLessIntense :
 			CalculateDominanceOverMoreIntense;
 		
-		//odpalic 3 fun do __device
-
 		for (uint32_t z = iradius; z < frames - iradius; z++)
 		{
 			if (z != iradius)
 			{
 				for (uint32_t i = 0; i < diffLen; i++)      // compute by removing and adding delta pixels to histogram
 				{
-					histogram[x * width +
-						in[z + DiffRemZ[i].z, iradius + DiffRemZ[i].y, DiffRemZ[i].x]]--;
-					histogram[x * width +
-						in[z + DiffAddZ[i].z, iradius + DiffAddZ[i].y, DiffAddZ[i].x]]++;
+					histogram[histogramWidth * x +
+						in[CalculateIndex(DiffRemZ[i], z, iradius, x, height, width)]]--;
+					histogram[histogramWidth * x +
+						in[CalculateIndex(DiffAddZ[i], z, iradius, x, height, width)]]++;
 				}
 			}
 
@@ -163,23 +166,39 @@ namespace GPU
 				{
 					for (uint32_t i = 0; i < diffLen; i++)      // compute by removing and adding delta pixels to histogram
 					{
-						histogram[x * width +
-							in[z + DiffRemY[i].z, DiffRemY[i].y, DiffRemY[i].x]]--;
-						histogram[x * width +
-							in[z + DiffAddY[i].z, DiffAddY[i].y, DiffAddY[i].x]]++;
+						histogram[histogramWidth * x +
+							in[CalculateIndex(DiffRemY[i], z, y, x, height, width)]]--;
+						histogram[histogramWidth * x +
+							in[CalculateIndex(DiffAddY[i], z, y, x, height, width)]]++;
 					}
 				}
 
 				uint16_t result = 0;
-				for (uint32_t i = 0; i < in[z, y, x] + threshold; i++)	//add numbers of pixels that are >= pixel + threshold
-					result += histogram[i];
-				//CalculateDominance(in[(z * height + y) * width + x], histogram, diffLen, threshold, &result);
+				uint16_t intensity = in[(z * height + y) * width + x] + threshold;
+				if (intensity > histogramWidth)
+					intensity = histogramWidth;
+				
+				if (!moreIntense)
+				{
+					for (uint64_t i = histogramWidth * x;
+						i < histogramWidth * x + intensity; i++)		//from [x][0] to [x][intensity-1]
+						result += histogram[i];
+				}
+				else
+				{
+					for (uint64_t i = histogramWidth * x + intensity;
+						i < histogramWidth * (x + 1); i++)				//from [x][intensity] to [x][max]
+						result += histogram[i];
+				}
+
 				out[(z * height + y) * width + x] = result;
+				//uint8_t val = CalculateDominance(in[(z * height + y) * width + x] + threshold, histogram, diffLen);
+				//out[(z * height + y) * width + x] = val;
 			}
 		}
 	}
 
-	void FlyingHistogram(Image<uint8_t> input, Image<uint8_t> output, float radius, int threshold, bool moreIntense)
+	void FlyingHistogram(Image<uint8_t> &input, Image<uint8_t> &output, float radius, int threshold, bool moreIntense)
 	{
 
 		uint16_t iradius = std::ceil(radius);
@@ -214,31 +233,40 @@ namespace GPU
 		gpuErrchk(cudaMemcpy(devDiffAddY, DiffAddY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
 		gpuErrchk(cudaMemcpy(devDiffRemY, DiffRemY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
 
-		uint16_t* devHistogram;					//array of starter histograms - only for device memory, no need to copy to host
-		//uint16_t* devHistogramCopy;				//working copy of histogram array
-		uint64_t histogtamSize = sizeof(uint8_t) * input.Width() * sizeof(uint16_t);
-
-		cudaMalloc(&devHistogram, histogtamSize);
-		//cudaMalloc(&devHistogramCopy, histogtamSize);
-		cudaMalloc(&devInput, size * sizeof(uint8_t));
-		cudaMalloc(&devOutput, size * sizeof(uint8_t));
-
-		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
-
 		uint32_t frames = input.Frames(),
 				 height = input.Height(),
 				 width  = input.Width();
 
-		FHFirstHistogramKernel<<<numBlocks, threadsPerBlock>>>
-			(devInput, devHistogram, frames, height, width, radius, iradius, threshold);
+		uint8_t* devHistogram;					//array of starter histograms - only for device memory, no need to copy to host
+		//uint16_t* devHistogramCopy;				//working copy of histogram array
+		uint16_t histogramWidth = std::numeric_limits<uint8_t>::max() + 1;
+		uint64_t histogtamSize = histogramWidth * width * sizeof(uint8_t);
 
+		cudaMalloc(&devHistogram, histogtamSize);
+		//cudaMalloc(&devHistogramCopy, histogtamSize);
+		cudaMalloc(&devInput,  size * sizeof(uint8_t));
+		cudaMalloc(&devOutput, size * sizeof(uint8_t));
+
+		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+		
+		FHFirstHistogramKernel<<<numBlocks, threadsPerBlock>>>
+			(devInput, devHistogram, histogramWidth, frames, height, width, radius, iradius, threshold);
+
+		cudaDeviceSynchronize();
 		//gpuErrchk(cudaMemcpy(devHistogramCopy, devHistogram, histogtamSize, cudaMemcpyDeviceToDevice));
 
 		FHKernel<<<numBlocks, threadsPerBlock>>>
-			(devInput, devOutput, devHistogram, devDiffRemZ, devDiffAddZ, devDiffRemY, devDiffAddY, 
+			(devInput, devOutput, devHistogram, histogramWidth, devDiffRemZ, devDiffAddZ, devDiffRemY, devDiffAddY,
 				DiffLen, frames, height, width, iradius, threshold, moreIntense);
 
+		cudaDeviceSynchronize();
+
+		//uint8_t* testOut = new uint8_t[size];
+		//memset(testOut, 0, size);
+		//gpuErrchk(cudaMemcpy(testOut, devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 		gpuErrchk(cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
+
+		//memcpy(output.GetDataPtr(), testOut, size * sizeof(uint8_t));
 
 		cudaFree(devDiffAddZ);
 		cudaFree(devDiffRemZ);
