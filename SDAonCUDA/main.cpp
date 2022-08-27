@@ -262,9 +262,9 @@ uint8_t SymmetricalDominance(Image<InBitDepth>& image, int threshold, uint32_t z
 template<class InBitDepth, class OutBitDepth>
 void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
 {
-    uint32_t width = image.width,
-             height = image.height,
-             frames = image.frames;
+    uint32_t width  = image.Width(),
+             height = image.Height(),
+             frames = image.Frames();
     uint16_t iradius = std::ceil(radius);
 
     for (uint32_t z = iradius; z < frames - iradius; z++)
@@ -283,9 +283,9 @@ void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int
 template<class InBitDepth, class OutBitDepth>
 void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
 {
-    uint32_t width = image.width,
-             height = image.height,
-             frames = image.frames;
+    uint32_t width = image.Width(),
+             height = image.Height(),
+             frames = image.Frames();
     uint16_t iradius = std::ceil(radius);
 
     for (uint32_t z = 0; z < frames; z++)
@@ -514,14 +514,13 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
 
         for (int16_t k = -iradius; k <= iradius; k++)
         {
-            std::cout << k << " ";
             for (int16_t j = -iradius; j <= iradius; j++)
                 for (int16_t i = -iradius; i <= iradius; i++)
                     if (histogramCondition(i, j, k, asqr, csqr))
                         histogramZ[image(iradiusZ + k, iradius + j, iradius + i)]++; // compute first histogram
         }
         std::cout << "\n";
-        for (uint32_t z = iradiusZ; z < frames - iradius; z++)
+        for (uint32_t z = iradiusZ; z < frames - iradiusZ; z++)
         {
             std::cout << z << " ";
             if (z != iradiusZ)
@@ -532,6 +531,7 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
                 }
 
             HistogramArray<OutBitDepth> histogramY = HistogramArray<OutBitDepth>(histogramZ);
+
             for (uint32_t y = iradius; y < height - iradius; y++)
             {
                 if (y != iradius)
@@ -657,9 +657,9 @@ int main()
 
     for (int i = 0; i < 1; i++)
     {
-        float radius = 5;
-        float radiusZ = 5;
-        int thresh = 40;
+        float radius = 3;
+        float radiusZ = 3;
+        int thresh = 100;
         Image<uint8_t> out = Image<uint8_t>(croppedImage);
         Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
         Image<uint8_t> out3 = Image<uint8_t>(croppedImage);
@@ -667,6 +667,8 @@ int main()
         auto start = std::chrono::high_resolution_clock::now();
         //GPU::SDA(croppedImage, out, radius, thresh);
         GPU::FlyingHistogram(croppedImage, out, radius, thresh, true);
+        //FlyingHistogram(croppedImage, out, radius, radius, thresh, true, true);
+        //SDAborderless(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
 
         auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
@@ -674,7 +676,7 @@ int main()
 
         std::cout << "\ndebug sum: " << out.dGetSum();
 
-        SaveTiff(out, (file + "test.tiff").c_str());
+        SaveTiff(out, (file + "testsdar3t100fh.tiff").c_str());
     }
 
     std::cout << "Finished\n";

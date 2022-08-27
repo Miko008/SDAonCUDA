@@ -122,14 +122,14 @@ public:
     {
         length = 1 + (uint32_t)std::numeric_limits<BitDepth>::max();
         histogram = new uint16_t[length];
-        memset(histogram, 0, length);
+        memset(histogram, 0, length * sizeof(length));
     }
 
     HistogramArray(const HistogramArray& pattern)
     {
         length = pattern.length;
         histogram = new uint16_t[length];
-        memcpy(histogram, pattern.histogram, length);
+        memcpy(histogram, pattern.histogram, length * sizeof(length));
     }
 
     ~HistogramArray()
@@ -149,7 +149,15 @@ public:
 
     void Clear()
     {
-        memset(histogram, 0, length);
+        memset(histogram, 0, length * sizeof(length));
+    }
+
+    uint64_t Sum()
+    {
+        uint64_t sum = 0;
+        for (size_t i = 0; i < length; i++)
+            sum += histogram[i];
+        return sum;
     }
 };
 

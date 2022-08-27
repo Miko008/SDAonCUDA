@@ -18,7 +18,7 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 
 namespace GPU
 {
-	__global__ void SDAKernel3D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float radius, uint16_t iradius, int threshold, uint64_t size)
+	__global__ void SDAKernel3D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float rsqr, uint16_t iradius, int threshold, uint64_t size)
 	{
 		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
 		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -32,7 +32,7 @@ namespace GPU
 				for (int16_t j = -iradius; j <= iradius; j++)
 					if (0 <= y + j && y + j < height)
 						for (int16_t i = -iradius; i <= iradius; i++)
-							if (i * i + j * j + k * k <= radius * radius && 0 <= x + i && x + i < width)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= rsqr)
 								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
 									out[(z * height + y) * width + x]++;
 	}
