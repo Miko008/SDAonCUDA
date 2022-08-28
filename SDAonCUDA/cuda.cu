@@ -135,7 +135,7 @@ namespace GPU
 		return ((z + Diff.z) * height + y + Diff.y) * width + x + Diff.x;
 	}
 
-	__global__ void FHKernel(uint8_t* in, uint8_t* out, uint8_t* histogram, uint16_t histogramWidth, Coords* DiffRemZ, Coords* DiffAddZ, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, int threshold, bool moreIntense)
+	__global__ void FHKernel(uint8_t* in, uint8_t* out, uint8_t* histogram, uint8_t* histogramCopy, uint8_t* histogramCopy2, uint16_t histogramWidth, Coords* DiffRemZ, Coords* DiffAddZ, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, int threshold, bool moreIntense)
 	{
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -160,40 +160,67 @@ namespace GPU
 				}
 			}
 
+			for (size_t i = 0; i < histogramWidth * width; i++)
+				histogramCopy[i] = histogram[i];
+
+			for (size_t i = 0; i < histogramWidth; i++)
+				histogramCopy2[i] = histogram[i + histogramWidth * x];
+			
 			for (uint32_t y = iradius; y < height - iradius; y++)
 			{
 				if (y != iradius)
 				{
 					for (uint32_t i = 0; i < diffLen; i++)      // compute by removing and adding delta pixels to histogram
 					{
-						histogram[histogramWidth * x +
+						histogramCopy[histogramWidth * x +
 							in[CalculateIndex(DiffRemY[i], z, y, x, height, width)]]--;
-						histogram[histogramWidth * x +
+						histogramCopy[histogramWidth * x +
 							in[CalculateIndex(DiffAddY[i], z, y, x, height, width)]]++;
+						/*histogramCopy2[
+							in[CalculateIndex(DiffRemY[i], z, y, x, height, width)]]--;
+						histogramCopy2[
+							in[CalculateIndex(DiffAddY[i], z, y, x, height, width)]]++;*/
 					}
 				}
 
 				uint16_t result = 0;
 				uint16_t intensity = in[(z * height + y) * width + x] + threshold;
-				if (intensity > histogramWidth)
-					intensity = histogramWidth;
 				
 				if (!moreIntense)
 				{
 					for (uint64_t i = histogramWidth * x;
 						i < histogramWidth * x + intensity; i++)		//from [x][0] to [x][intensity-1]
-						result += histogram[i];
+						result += histogramCopy[i];
 				}
 				else
 				{
 					for (uint64_t i = histogramWidth * x + intensity;
 						i < histogramWidth * (x + 1); i++)				//from [x][intensity] to [x][max]
-						result += histogram[i];
+						result += histogramCopy[i];
 				}
 
+				//if (!moreIntense)
+				//{
+				//	for (uint64_t i = 0;
+				//		i < intensity; i++)
+				//		result += histogramCopy2[i];
+				//}
+				//else
+				//{
+				//	for (uint64_t i = intensity;
+				//		i < histogramWidth; i++)				//from [x][intensity] to [x][max]
+				//		result += histogramCopy2[i];
+				//}
+
+				//uint16_t* result = new uint16_t;\
+				CalculateDominance(in[(z * height + y) * width + x] + threshold, \
+					histogram, \
+					diffLen, \
+					histogramWidth * x, \
+					result);
+
 				out[(z * height + y) * width + x] = result;
-				//uint8_t val = CalculateDominance(in[(z * height + y) * width + x] + threshold, histogram, diffLen);
-				//out[(z * height + y) * width + x] = val;
+
 			}
 		}
 	}
@@ -204,7 +231,7 @@ namespace GPU
 		uint16_t iradius = std::ceil(radius);
 
 		uint16_t DiffLen = 0, DiffLenZ = 0;
-		Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;   //array of coords of delta pixels
+		Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY;//, * DiffAddX, * DiffRemX;   //array of coords of delta pixels
 
 		DiffLenZ =	SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ, true, Direction::Z); //number of delta pixels
 		DiffLen  =	SetUpRadiusDifference(radius, &DiffAddY, &DiffRemY, true, Direction::Y);
@@ -218,7 +245,6 @@ namespace GPU
 		dim3 numBlocks(input.Width() / 1024 + 1, 1, 1);
 		dim3 threadsPerBlock(1024, 1, 1);
 
-		//HistogramArray<uint8_t> histogramX = HistogramArray<uint8_t>();
 
 		uint64_t size = input.GetSize();
 		uint8_t* devInput, * devOutput;
@@ -237,13 +263,15 @@ namespace GPU
 				 height = input.Height(),
 				 width  = input.Width();
 
-		uint8_t* devHistogram;					//array of starter histograms - only for device memory, no need to copy to host
-		//uint16_t* devHistogramCopy;				//working copy of histogram array
+		uint8_t* devHistogram;						//array of starter histograms - only for device memory, no need to copy to host
+		uint8_t* devHistogramCopy;
+		uint8_t* devHistogramCopy2;
 		uint16_t histogramWidth = std::numeric_limits<uint8_t>::max() + 1;
-		uint64_t histogtamSize = histogramWidth * width * sizeof(uint8_t);
+		uint64_t histogramSize = histogramWidth * width * sizeof(uint8_t);
 
-		cudaMalloc(&devHistogram, histogtamSize);
-		//cudaMalloc(&devHistogramCopy, histogtamSize);
+		cudaMalloc(&devHistogram, histogramSize);
+		cudaMalloc(&devHistogramCopy, histogramSize);
+		cudaMalloc(&devHistogramCopy2, histogramWidth * sizeof(uint8_t));
 		cudaMalloc(&devInput,  size * sizeof(uint8_t));
 		cudaMalloc(&devOutput, size * sizeof(uint8_t));
 
@@ -253,10 +281,9 @@ namespace GPU
 			(devInput, devHistogram, histogramWidth, frames, height, width, radius, iradius, threshold);
 
 		cudaDeviceSynchronize();
-		//gpuErrchk(cudaMemcpy(devHistogramCopy, devHistogram, histogtamSize, cudaMemcpyDeviceToDevice));
 
 		FHKernel<<<numBlocks, threadsPerBlock>>>
-			(devInput, devOutput, devHistogram, histogramWidth, devDiffRemZ, devDiffAddZ, devDiffRemY, devDiffAddY,
+			(devInput, devOutput, devHistogram, devHistogramCopy, devHistogramCopy2, histogramWidth, devDiffRemZ, devDiffAddZ, devDiffRemY, devDiffAddY,
 				DiffLen, frames, height, width, iradius, threshold, moreIntense);
 
 		cudaDeviceSynchronize();
@@ -273,8 +300,119 @@ namespace GPU
 		cudaFree(devDiffAddY);
 		cudaFree(devDiffRemY);
 
-		//cudaFree(devHistogramCopy);
+		cudaFree(devHistogramCopy2);
+		cudaFree(devHistogramCopy);
 		cudaFree(devHistogram);
+		cudaFree(devInput);
+		cudaFree(devOutput);
+	}
+
+	__global__ void FlyHistKernel(uint8_t* in, uint8_t* out, uint16_t histogramWidth, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	{
+		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
+		if (tempid >= frames * width)
+			return;
+		uint32_t z = tempid % frames;
+		tempid /= frames;
+		uint32_t x = tempid % width;
+
+		if (x < iradius || z < iradius || x >= width - iradius || z >= frames - iradius)
+			return;
+
+		//auto CalculateDominance = moreIntense ? CalculateDominanceOverLessIntense :\\
+			CalculateDominanceOverMoreIntense;
+
+		uint8_t* histogram = new uint8_t[histogramWidth];
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			for (int16_t j = -iradius; j <= iradius; j++)
+				for (int16_t i = -iradius; i <= iradius; i++)
+					if (i * i + j * j + k * k <= asqr)
+						histogram[in[((z + k) * height + iradius + j) * width + x + i]]++;
+
+		for (uint32_t y = iradius; y < height - iradius; y++)
+		{
+			if (y != iradius)
+			{
+				for (uint32_t i = 0; i < diffLen; i++)      // compute by removing and adding delta pixels to histogram
+				{
+					histogram[in[CalculateIndex(DiffRemY[i], z, y, x, height, width)]]--;
+					histogram[in[CalculateIndex(DiffAddY[i], z, y, x, height, width)]]++;
+				}
+			}
+
+			uint16_t result = 0;
+			uint16_t intensity = in[(z * height + y) * width + x] + threshold;
+
+			if (!moreIntense)
+				for (uint64_t i = 0; i < intensity; i++)
+					result += histogram[i];
+			else
+				for (uint64_t i = intensity; i < histogramWidth; i++)
+					result += histogram[i];
+			out[(z * height + y) * width + x] = result;
+
+			//uint16_t* result = new uint16_t;\
+			out[(z * height + y) * width + x] = CalculateDominance(in[(z * height + y) * width + x] + threshold, \
+				histogram, \
+				diffLen, \
+				histogramWidth * x, \
+				result);
+		}
+
+		delete[] histogram;
+	}
+
+
+	void FlyingHistogram2(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
+	{
+		uint16_t iradius = std::ceil(radius);
+
+		uint16_t DiffLen = 0, DiffLenZ = 0;
+		Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY;								 //array of coords of delta pixels
+
+		DiffLenZ =	SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ, true, Direction::Z); //number of delta pixels
+		DiffLen  =	SetUpRadiusDifference(radius, &DiffAddY, &DiffRemY, true, Direction::Y);
+
+		//to do anisotropic
+		//float asqr = radius * radius;
+		//float csqr = radiusZ * radiusZ;
+
+		uint32_t frames = input.Frames(),
+			height = input.Height(),
+			width = input.Width();
+
+		dim3 numBlocks((width * frames) / 1024 + 1, 1, 1);
+		dim3 threadsPerBlock(1024, 1, 1);
+
+		uint64_t size = input.GetSize();
+		uint8_t* devInput, * devOutput;
+
+		Coords* devDiffAddY, * devDiffRemY;
+		auto tesd = sizeof(Coords);
+		gpuErrchk(cudaMalloc(&devDiffAddY, DiffLen * sizeof(Coords)));
+		gpuErrchk(cudaMalloc(&devDiffRemY, DiffLen * sizeof(Coords)));
+		gpuErrchk(cudaMemcpy(devDiffAddY, DiffAddY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
+		gpuErrchk(cudaMemcpy(devDiffRemY, DiffRemY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
+
+
+		uint16_t histogramWidth = std::numeric_limits<uint8_t>::max() + 1;
+
+		cudaMalloc(&devInput, size * sizeof(uint8_t));
+		cudaMalloc(&devOutput, size * sizeof(uint8_t));
+
+		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
+
+		FlyHistKernel<<<numBlocks, threadsPerBlock>>>
+			(devInput, devOutput, histogramWidth, devDiffRemY, devDiffAddY, DiffLen, frames, height, width, iradius, radius * radius, threshold, moreIntense);
+
+		cudaDeviceSynchronize();
+
+		gpuErrchk(cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
+
+		cudaFree(devDiffAddY);
+		cudaFree(devDiffRemY);
+
 		cudaFree(devInput);
 		cudaFree(devOutput);
 	}

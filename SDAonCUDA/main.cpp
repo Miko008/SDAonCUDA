@@ -661,12 +661,10 @@ int main()
         float radiusZ = 3;
         int thresh = 100;
         Image<uint8_t> out = Image<uint8_t>(croppedImage);
-        Image<uint8_t> out2 = Image<uint8_t>(croppedImage);
-        Image<uint8_t> out3 = Image<uint8_t>(croppedImage);
 
         auto start = std::chrono::high_resolution_clock::now();
         //GPU::SDA(croppedImage, out, radius, thresh);
-        GPU::FlyingHistogram(croppedImage, out, radius, thresh, true);
+        GPU::FlyingHistogram2(croppedImage, out, radius, thresh, true);
         //FlyingHistogram(croppedImage, out, radius, radius, thresh, true, true);
         //SDAborderless(croppedImage, out, radius, thresh);
         auto finish = std::chrono::high_resolution_clock::now();
