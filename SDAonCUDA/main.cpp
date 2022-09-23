@@ -9,7 +9,10 @@
 #include "tinytiffreader.h"
 #include "tinytiffwriter.h"
 #include "cuda.h"
+#include "options.hpp"
+#include "logger.hpp"
 
+using namespace std::string_literals;
 
 #pragma region Image class
 
@@ -141,15 +144,14 @@ template<class BitDepth>
 bool ReadTiff(Image<BitDepth>& image, const char* filename)
 {
     bool ok = false;
-    std::cout << "\nReading '" << std::string(filename) << "'\n";
-
+    LOG("\nReading '" + std::string(filename) + "'\n");
     TinyTIFFReaderFile* tiffr = TinyTIFFReader_open(filename);
     if (!tiffr) {
-        std::cout << "    ERROR reading (not existent, not accessible or no TIFF file)\n";
+        LOG("ERROR reading (not existent, not accessible or no TIFF file)\n");
         return false;
     }
     else {
-        if (TinyTIFFReader_wasError(tiffr)) std::cout << "   ERROR:" << TinyTIFFReader_getLastError(tiffr) << "\n";
+        if (TinyTIFFReader_wasError(tiffr)) LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
 
         uint32_t width = TinyTIFFReader_getWidth(tiffr);
         uint32_t height = TinyTIFFReader_getHeight(tiffr);
@@ -157,7 +159,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
         BitDepth* slide = new BitDepth[width * static_cast<uint64_t>(height)];
         image.SetSize(width, height, frames);
 
-        if (TinyTIFFReader_wasError(tiffr)) std::cout << "   ERROR:" << TinyTIFFReader_getLastError(tiffr) << "\n";
+        if (TinyTIFFReader_wasError(tiffr)) LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
         else ok = true;
 
         for (uint32_t frame = 0; ok; frame++)
@@ -168,16 +170,17 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
             if (TinyTIFFReader_wasError(tiffr))
             {
                 ok = false;
-                std::cout << "   ERROR:" << TinyTIFFReader_getLastError(tiffr) << "\n";
+                LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
             }
             if (!TinyTIFFReader_readNext(tiffr))
                 break;
         }
         delete[] slide;
-        std::cout << "    read and checked all frames: " << ((ok) ? std::string("SUCCESS") : std::string("ERROR")) << " \n";
+        LOG("read and checked all frames: "s + ((ok) ? "SUCCESS"s : "ERROR"s) + " \n"s);
     }
     TinyTIFFReader_close(tiffr);
-
+    if (!ok)
+        return false;
     return true;
 }
 
@@ -187,7 +190,7 @@ bool SaveTiff(Image<BitDepth>& image, const char* filename)
     TinyTIFFWriterFile* tiff = TinyTIFFWriter_open(filename, 8, TinyTIFFWriter_UInt, 1, image.Width(), image.Height(), TinyTIFFWriter_Greyscale);
     //bits per sample constant cause of some errors
 
-    std::cout << "\nSaving as '" << filename << "'\n";
+    LOG("\nSaving as '"s + filename + "'\n"s);
     if (tiff)
     {
         for (size_t f = 0; f < image.Frames(); f++)
@@ -195,16 +198,16 @@ bool SaveTiff(Image<BitDepth>& image, const char* filename)
             int res = TinyTIFFWriter_writeImage(tiff, image.GetDataPtr() + (f * image.Width() * image.Height())); //TinyTIFF_Planar   TinyTIFF_Chunky
             if (res != TINYTIFF_TRUE)
             {
-                std::cout << "ERROR: error writing image data into '" << filename << "'! MESSAGE: " << TinyTIFFWriter_getLastError(tiff) << "\n";
+                LOG("ERROR: error writing image data into '"s + filename + "'! MESSAGE: "s + TinyTIFFWriter_getLastError(tiff) + "\n"s);
                 TinyTIFFWriter_close(tiff);
                 return false;
             }
         }
         TinyTIFFWriter_close(tiff);
-        std::cout << "File saved as '" << filename << "'\n";
+        LOG("File saved as '"s + filename + "'\n"s);
         return true;
     }
-    std::cout << "ERROR: could not open '" << filename << "' for writing!\n";
+    LOG("ERROR: could not open '"s + filename + "' for writing!\n"s);
     return false;
 }
 
@@ -283,7 +286,7 @@ void SDA(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int
 template<class InBitDepth, class OutBitDepth>
 void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
 {
-    uint32_t width = image.Width(),
+    uint32_t width  = image.Width(),
              height = image.Height(),
              frames = image.Frames();
     uint16_t iradius = std::ceil(radius);
@@ -307,8 +310,8 @@ void SDAborderless(Image<InBitDepth>& image, Image<OutBitDepth>& output, float r
 template<class InBitDepth, class OutBitDepth>
 void SDAborderless2D(Image<InBitDepth>& image, Image<OutBitDepth>& output, float radius, int threshold)
 {
-    uint32_t width = image.width,
-        height = image.height;
+    uint32_t width  = image.Width(),
+             height = image.Height();
     uint16_t iradius = std::ceil(radius);
 
     for (uint32_t y = 0; y < height; y++)
@@ -589,94 +592,97 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
     delete[] DiffAddZ, DiffRemZ, DiffAddY, DiffRemY, DiffAddX, DiffRemX;
 }
 
-int main()
+int main(int argc, char** argv)
 {
-    std::string file = "C:/Users/Miko/Desktop/MgrTif/";
-    std::string input = "zebraCropped 50x50x5";
-    std::string output = "zc 50x50x5 test";
-    std::string type = ".tif";
+    std::string inputFilename;
+    std::string outputFilename{"output.tiff"};
+    float radius  = 0;
+    float radiusZ = 0;
+    int threshold = 0;
+    bool help        = false;
+    bool twoDim      = false;
+    bool threeDim    = false;
+    bool moreIntense = false;
+    bool onCpu       = false;
+    bool usingFH     = false;
 
-    std::cout << "Started\n";
+    sweet::Options opt(argc, const_cast<char**>(argv), "Description:");
 
-    ///////// ensure correctness of rotation
-    //float radius = 3.5;
-    //
-    //Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY, * DiffAddX, * DiffRemX;  //array of coords of delta pixels
-    //uint16_t diffLen = SetUpRadiusDifference(radius, Z, &DiffAddZ, &DiffRemZ); //number of delta pixels
-    //SetUpRadiusDifference(radius, Y, &DiffAddY, &DiffRemY);
-    //SetUpRadiusDifference(radius, X, &DiffAddX, &DiffRemX);
-    //
-    //bool same;
-    //for (size_t i = 0; i < diffLen; i++)
-    //{
-    //    DiffAddZ[i].Rotate90x();
-    //    same = false;
-    //    for (size_t j = 0; j < diffLen; j++)
-    //    {
-    //        if (DiffAddZ[i] == DiffAddY[j])
-    //        {
-    //            same = true;
-    //            break;
-    //        }
-    //    }
-    //    if (same)
-    //        std::cout << "\nsame";
-    //    else
-    //        std::cout << "\ndifferent";
-    //}
+    opt.get("-i", "--input", "Input filename", inputFilename);
+    opt.get("-o", "--output", "Output filename (optional)", outputFilename);
 
-    Image<uint8_t> croppedImage = Image<uint8_t>();
+    opt.get("-r", "--radius", "Radius in pixels", radius);
+    opt.get("-z", "--radius-z", "Radius in pixels in anisotropic axis (optional)", radiusZ);
+    opt.get("-t", "--threshold", "Intensity threshold (optional)", threshold);
+    opt.get("-m", "--more-intense", "Calculate dominance over more intense pixels (optional)", moreIntense);
 
-    //Image<uint8_t> image = Image<uint8_t>();
-    //ReadTiff(image, (file + input + type).c_str());
-    //
-    //if(!CropTiff(image, croppedImage, 600, 600, 0, 900, 900, 50))
-    //{
-    //    std::cout << "Failed Cropping image.\n";
-    //    return 1;
-    //}
-    //SaveTiff(croppedImage, (file + output + type).c_str());
+    opt.get("-2", "--2-dim", "Two dimensional algorithm (CPU only)", twoDim);
+    opt.get("-3", "--3-dim", "Three dimensional algorithm", threeDim);
+    
+    opt.get("-c", "--cpu", "Compute sequentially on CPU (optional)", onCpu);
+    opt.get("-f", "--flying-histogram", "Compute using flying histogram version of algorithm (optional)", usingFH);
+   
+    opt.get("-h", "--help", "Get help", help);
 
-    ////gpu check 
-    //int* a,* b,* c, len = 100;
-    //a = new int[len];
-    //b = new int[len];
-    //c = new int[len];
-    //for (int i = 0; i < len; i++)
-    //{
-    //    a[i] = 5 + i;
-    //    b[i] = 3 - i;
-    //    c[i] = 0;
-    //}
-    //Test::addWithCuda(c, a, b, len);
-    //for (int i = 0; i < len; i++)
-    //    std::cout << " " << c[i];
-    //return 0;
+    opt.finalize();
 
-    ReadTiff(croppedImage, (file + input + type).c_str());
+    LOG(inputFilename);
 
-    for (int i = 0; i < 1; i++)
+    if (inputFilename.empty() || radius == 0.0)
     {
-        float radius = 3;
-        float radiusZ = 3;
-        int thresh = 100;
-        Image<uint8_t> out = Image<uint8_t>(croppedImage);
-
-        auto start = std::chrono::high_resolution_clock::now();
-        //GPU::SDA(croppedImage, out, radius, thresh);
-        GPU::FlyingHistogram2(croppedImage, out, radius, thresh, true);
-        //FlyingHistogram(croppedImage, out, radius, radius, thresh, true, true);
-        //SDAborderless(croppedImage, out, radius, thresh);
-        auto finish = std::chrono::high_resolution_clock::now();
-
-        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
-        std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
-
-        std::cout << "\ndebug sum: " << out.dGetSum();
-
-        SaveTiff(out, (file + "testsdar3t100fh.tiff").c_str());
+        if (!help)
+            std::cerr << "Argument error! Run: \n" << argv[0] << " --help \nto see valid options.\n";
+        return 1;
     }
 
-    std::cout << "Finished\n";
+    if (twoDim && threeDim)
+    {
+        std::cerr << "Argument error! Please select only one dimensionality (2D/3D)\n";
+        return 1;
+    }
+    else if (!(twoDim || threeDim))
+    {
+        std::cerr << "Argument error! Please select one dimensionality (2D/3D)\n";
+        return 1;
+    }
+
+    Image<uint8_t> input{};
+    
+    if (!ReadTiff(input, inputFilename.c_str()))
+    {
+        std::cout << "\n Error while reading"s + inputFilename + "\Terminating.";
+        return 1;
+    }
+
+    Image<uint8_t> output{ input };
+
+    auto start = std::chrono::high_resolution_clock::now();
+    if (!onCpu)
+    {
+        if(!usingFH)
+            GPU::SDA(input, output, radius, threshold);
+        else
+            GPU::FlyingHistogram2(input, output, radius, threshold, true);
+    }
+    else
+    {
+        if (!usingFH)
+            FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
+        else
+            if (threeDim)
+                SDAborderless(input, output, radius, threshold);
+            else if (twoDim)
+                SDAborderless2D(input, output, radius, threshold);
+    }
+    auto finish = std::chrono::high_resolution_clock::now();
+
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
+    
+    std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
+
+    SaveTiff(output, outputFilename.c_str());
+
+    std::cout << "Finished" << std::endl;
+
     return 0;
 }
