@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include <cmath>
+#include <limits>
 
 #include "device_launch_parameters.h"
 #include "main.h"
@@ -20,6 +21,20 @@ namespace GPU
 {
 #pragma region Device functions
 	//GPU functions callable only from GPU
+
+	__device__ bool MoreIntense(uint8_t lhs, uint8_t rhs, int thresh)
+	{
+		if (rhs + thresh < 0) //to do - ensure no wraping on device || std::numeric_limits<uint8_t>::max() - rhs < thresh)
+			return false;
+		return lhs >= rhs + thresh;
+	}
+
+	__device__ bool LessIntense(uint8_t lhs, uint8_t rhs, int thresh)
+	{
+		if (rhs + thresh < 0)
+			return false;
+		return lhs <= rhs + thresh;
+	}
 
 	/// <summary>
 	/// Calculates darker pixels from histogram
@@ -72,6 +87,21 @@ namespace GPU
 		return ((z + Diff.z) * height + y + Diff.y) * width + x + Diff.x;
 	}
 
+	__device__ uint8_t SingleSDA(uint8_t* in, uint32_t frames, uint32_t height, uint32_t width, uint32_t x, uint32_t y, uint32_t z, float asqr, uint16_t iradius, int threshold, bool moreIntense)
+	{
+		uint8_t result = 0;
+		auto condition = moreIntense ? MoreIntense : LessIntense;
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			if (0 <= z + k && z + k < frames)
+				for (int16_t j = -iradius; j <= iradius; j++)
+					if (0 <= y + j && y + j < height)
+						for (int16_t i = -iradius; i <= iradius; i++)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
+									result++;
+	}
+
 #pragma endregion
 
 
@@ -121,7 +151,7 @@ namespace GPU
 	/// <param name="iradius">ceiled radius</param>
 	/// <param name="threshold"></param>
 	/// <param name="size">image size</param>
-	__global__ void SDAKernel1D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size)
+	__global__ void SDAKernel1D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size, bool moreIntense)
 	{
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -133,13 +163,15 @@ namespace GPU
 		tempid /= height;
 		uint32_t z = tempid % frames;
 
+		auto condition = moreIntense ? MoreIntense : LessIntense;
+
 		for (int16_t k = -iradius; k <= iradius; k++)
 			if (0 <= z + k && z + k < frames)
 				for (int16_t j = -iradius; j <= iradius; j++)
 					if (0 <= y + j && y + j < height)
 						for (int16_t i = -iradius; i <= iradius; i++)
 							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
-								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
 									out[(z * height + y) * width + x]++;
 	}
 
@@ -288,10 +320,10 @@ namespace GPU
 		uint32_t z = tempid % frames;
 		tempid /= frames;
 		uint32_t x = tempid % width;
-		//^caclulate x and x based on thread id
+		//^caclulate x and z based on thread id
 
 		if (x < iradius || z < iradius || x >= width - iradius || z >= frames - iradius)
-			return;			//return when out of bonds - to do margin sda
+			return;			//return when out of bonds
 
 		//auto CalculateDominance = moreIntense ? CalculateDominanceOverLessIntense :\
 			CalculateDominanceOverMoreIntense;
@@ -319,7 +351,8 @@ namespace GPU
 
 			//cacluate dominance in scope (temporary)
 			uint16_t result = 0;
-			uint16_t intensity = in[(z * height + y) * width + x] + threshold;
+			int zeroTest = in[(z * height + y) * width + x] + threshold;
+			uint16_t intensity = zeroTest > 0 ? zeroTest : 0;
 
 			if (!moreIntense)
 				for (uint64_t i = 0; i < intensity; i++)
@@ -341,6 +374,36 @@ namespace GPU
 		delete[] histogram;
 	}
 
+	__global__ void MarginSDA(uint8_t* in, uint8_t* out, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	{		
+		//todo omit using division operations
+		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
+		if (tempid >= frames * height * width)
+			return;
+		uint32_t x = tempid % width;
+		tempid /= width;
+		uint32_t y = tempid % height;
+		tempid /= height;
+		uint32_t z = tempid % frames;
+		//^caclulate x, y and z based on thread id
+
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//skip core calculated by FH
+			return;
+
+		uint8_t result = 0;
+		auto condition = moreIntense ? MoreIntense : LessIntense;
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			if (0 <= z + k && z + k < frames)
+				for (int16_t j = -iradius; j <= iradius; j++)
+					if (0 <= y + j && y + j < height)
+						for (int16_t i = -iradius; i <= iradius; i++)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
+									result++;
+
+		out[(z * height + y) * width + x] = result; //SingleSDA(in, frames, height, width, x, y, z, asqr, iradius, threshold, moreIntense);
+	}
 
 	__global__ void addKernel(int* c, const int* a, const int* b, int size)
 	{
@@ -354,7 +417,7 @@ namespace GPU
 
 #pragma region CPU functions
 
-	void SDA(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold)
+	void SDA(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
 	{
 		//Todo fix arg templates - linker error
 		//template<class InBitDepth, class OutBitDepth>
@@ -373,8 +436,8 @@ namespace GPU
 
 		dim3 numBlocks(size / 1024 + 1, 1, 1);
 		dim3 threadsPerBlock(1024, 1, 1);
-		SDAKernel1D << <numBlocks, threadsPerBlock >> >
-			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size);
+		SDAKernel1D <<<numBlocks, threadsPerBlock>>>
+			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
 		cudaDeviceSynchronize();
 
@@ -474,20 +537,21 @@ namespace GPU
 		Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY;								 //array of coords of delta pixels
 
 		DiffLenZ = SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ, true, Direction::Z); //number of delta pixels
-		DiffLen = SetUpRadiusDifference(radius, &DiffAddY, &DiffRemY, true, Direction::Y);
+		DiffLen  = SetUpRadiusDifference(radius, &DiffAddY, &DiffRemY, true, Direction::Y);
 
 		//to do anisotropic
 		//float asqr = radius * radius;
 		//float csqr = radiusZ * radiusZ;
 
 		uint32_t frames = input.Frames(),
-			height = input.Height(),
-			width = input.Width();
+				 height = input.Height(),
+				 width  = input.Width();
+		uint64_t size   = input.GetSize();
 
 		dim3 numBlocks((width * frames) / 1024 + 1, 1, 1);
+		dim3 numBlocksMargin(size / 1024 + 1, 1, 1);
 		dim3 threadsPerBlock(1024, 1, 1);
 
-		uint64_t size = input.GetSize();
 		uint8_t* devInput, * devOutput;
 
 		Coords* devDiffAddY, * devDiffRemY;
@@ -505,8 +569,12 @@ namespace GPU
 
 		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
-		FlyHistKernel << <numBlocks, threadsPerBlock >> >
+		//calculate inside of image with FH
+		FlyHistKernel <<<numBlocks, threadsPerBlock >>>
 			(devInput, devOutput, histogramWidth, devDiffRemY, devDiffAddY, DiffLen, frames, height, width, iradius, radius * radius, threshold, moreIntense);
+
+		MarginSDA <<<numBlocksMargin, threadsPerBlock >>>
+			(devInput, devOutput, histogramWidth, frames, height, width, iradius, radius * radius, threshold, moreIntense);
 
 		cudaDeviceSynchronize();
 

@@ -9,7 +9,7 @@ namespace GPU
 	/// <param name="output">image</param>
 	/// <param name="radius">of calculated region</param>
 	/// <param name="threshold"></param>
-	void SDA(Image<uint8_t> &input, Image<uint8_t> &output, float radius, int threshold);
+	void SDA(Image<uint8_t> &input, Image<uint8_t> &output, float radius, int threshold, bool moreIntense);
 
 	/// <summary>
 	/// @depreciated

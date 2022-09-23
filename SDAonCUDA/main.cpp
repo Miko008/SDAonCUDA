@@ -147,11 +147,11 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
     LOG("\nReading '" + std::string(filename) + "'\n");
     TinyTIFFReaderFile* tiffr = TinyTIFFReader_open(filename);
     if (!tiffr) {
-        LOG("ERROR reading (not existent, not accessible or no TIFF file)\n");
+        LOG("\nERROR reading (not existent, not accessible or no TIFF file)\n");
         return false;
     }
     else {
-        if (TinyTIFFReader_wasError(tiffr)) LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
+        if (TinyTIFFReader_wasError(tiffr)) LOG("\nERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
 
         uint32_t width = TinyTIFFReader_getWidth(tiffr);
         uint32_t height = TinyTIFFReader_getHeight(tiffr);
@@ -159,7 +159,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
         BitDepth* slide = new BitDepth[width * static_cast<uint64_t>(height)];
         image.SetSize(width, height, frames);
 
-        if (TinyTIFFReader_wasError(tiffr)) LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
+        if (TinyTIFFReader_wasError(tiffr)) LOG("\nERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
         else ok = true;
 
         for (uint32_t frame = 0; ok; frame++)
@@ -170,13 +170,13 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
             if (TinyTIFFReader_wasError(tiffr))
             {
                 ok = false;
-                LOG("ERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
+                LOG("\nERROR:"s + TinyTIFFReader_getLastError(tiffr) + "\n"s);
             }
             if (!TinyTIFFReader_readNext(tiffr))
                 break;
         }
         delete[] slide;
-        LOG("read and checked all frames: "s + ((ok) ? "SUCCESS"s : "ERROR"s) + " \n"s);
+        LOG("\nread and checked all frames: "s + ((ok) ? "SUCCESS"s : "ERROR"s) + " \n"s);
     }
     TinyTIFFReader_close(tiffr);
     if (!ok)
@@ -198,16 +198,16 @@ bool SaveTiff(Image<BitDepth>& image, const char* filename)
             int res = TinyTIFFWriter_writeImage(tiff, image.GetDataPtr() + (f * image.Width() * image.Height())); //TinyTIFF_Planar   TinyTIFF_Chunky
             if (res != TINYTIFF_TRUE)
             {
-                LOG("ERROR: error writing image data into '"s + filename + "'! MESSAGE: "s + TinyTIFFWriter_getLastError(tiff) + "\n"s);
+                LOG("\nERROR: error writing image data into '"s + filename + "'! MESSAGE: "s + TinyTIFFWriter_getLastError(tiff) + "\n"s);
                 TinyTIFFWriter_close(tiff);
                 return false;
             }
         }
         TinyTIFFWriter_close(tiff);
-        LOG("File saved as '"s + filename + "'\n"s);
+        LOG("\nFile saved as '"s + filename + "'\n"s);
         return true;
     }
-    LOG("ERROR: could not open '"s + filename + "' for writing!\n"s);
+    LOG("\nERROR: could not open '"s + filename + "' for writing!\n"s);
     return false;
 }
 
@@ -620,13 +620,11 @@ int main(int argc, char** argv)
     opt.get("-3", "--3-dim", "Three dimensional algorithm", threeDim);
     
     opt.get("-c", "--cpu", "Compute sequentially on CPU (optional)", onCpu);
-    opt.get("-f", "--flying-histogram", "Compute using flying histogram version of algorithm (optional)", usingFH);
+    opt.get("-f", "--fly-hist", "Use flying histogram version of algorithm (optional)", usingFH);
    
     opt.get("-h", "--help", "Get help", help);
 
     opt.finalize();
-
-    LOG(inputFilename);
 
     if (inputFilename.empty() || radius == 0.0)
     {
@@ -646,6 +644,9 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if (!moreIntense)
+        threshold = -threshold;
+
     Image<uint8_t> input{};
     
     if (!ReadTiff(input, inputFilename.c_str()))
@@ -660,9 +661,9 @@ int main(int argc, char** argv)
     if (!onCpu)
     {
         if(!usingFH)
-            GPU::SDA(input, output, radius, threshold);
+            GPU::SDA(input, output, radius, threshold, moreIntense);
         else
-            GPU::FlyingHistogram2(input, output, radius, threshold, true);
+            GPU::FlyingHistogram2(input, output, radius, threshold, moreIntense);
     }
     else
     {
