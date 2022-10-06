@@ -79,7 +79,7 @@ private:
 public:
     Image();
     Image(const Image& pattern);
-    Image(int _width, int _height, int _frames);
+    Image(uint32_t _width, uint32_t _height, uint32_t _frames);
     ~Image();
 
     uint32_t Width()  { return width;  };
@@ -89,8 +89,9 @@ public:
     BitDepth* GetDataPtr() { return data; };
     BitDepth& Image::operator()(uint32_t z, uint32_t y, uint32_t x);
     bool operator==(Image& rhs) const;
-    
+
     void Normalize();
+    void Normalize(uint16_t newMax);
     uint64_t GetSize() const;
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames);
     bool SetSlide(uint32_t frame, BitDepth* newslide);
@@ -105,6 +106,22 @@ public:
         return sum;
     }
 
+    template<class T2>
+    void CopyValuesFrom(Image<T2>& pattern)
+    {
+        if (GetSize() != pattern.GetSize())
+            return;
+        //T2* q = pattern.GetDataPtr();\
+        for (BitDepth* p = data; p < data + GetSize(); ++p)\
+        {\
+            *p = static_cast<BitDepth>(*q);\
+            ++q;\
+        }
+        for (size_t k = 0; k < frames; k++)
+            for (size_t j = 0; j < height; j++)
+                for (size_t i = 0; i < width; i++)
+                    data[Index(k, j, i)] = pattern(k, j, i);
+    }
 
 private:
     uint64_t Index(uint32_t z, uint32_t y, uint32_t x) const;
@@ -122,14 +139,14 @@ public:
     {
         length = 1 + (uint32_t)std::numeric_limits<BitDepth>::max();
         histogram = new uint16_t[length];
-        memset(histogram, 0, length * sizeof(length));
+        memset(histogram, 0, length * sizeof(*histogram));
     }
 
     HistogramArray(const HistogramArray& pattern)
     {
         length = pattern.length;
         histogram = new uint16_t[length];
-        memcpy(histogram, pattern.histogram, length * sizeof(length));
+        memcpy(histogram, pattern.histogram, length * sizeof(*histogram));
     }
 
     ~HistogramArray()

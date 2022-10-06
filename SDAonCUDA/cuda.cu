@@ -151,7 +151,8 @@ namespace GPU
 	/// <param name="iradius">ceiled radius</param>
 	/// <param name="threshold"></param>
 	/// <param name="size">image size</param>
-	__global__ void SDAKernel1D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size, bool moreIntense)
+	template <class T>
+	__global__ void SDAKernel1D(uint8_t* in, T* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size, bool moreIntense)
 	{
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -312,7 +313,8 @@ namespace GPU
 	/// <param name="asqr">radius squared</param>
 	/// <param name="threshold"></param>
 	/// <param name="moreIntense">: true  - count lighter pixels, false - count darker pixels </param>
-	__global__ void FlyHistKernel(uint8_t* in, uint8_t* out, uint16_t histogramWidth, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	template <class T>
+	__global__ void FlyHistKernel(uint8_t* in, T* out, uint16_t histogramWidth, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
 	{
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
 		if (tempid >= frames * width)
@@ -374,7 +376,8 @@ namespace GPU
 		delete[] histogram;
 	}
 
-	__global__ void MarginSDA(uint8_t* in, uint8_t* out, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	template <class T>
+	__global__ void MarginSDA(uint8_t* in, T* out, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
 	{		
 		//todo omit using division operations
 		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -389,8 +392,9 @@ namespace GPU
 
 		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//skip core calculated by FH
 			return;
+		//^skip core calculated by FH
 
-		uint8_t result = 0;
+		uint16_t result = 0;
 		auto condition = moreIntense ? MoreIntense : LessIntense;
 
 		for (int16_t k = -iradius; k <= iradius; k++)
@@ -417,7 +421,8 @@ namespace GPU
 
 #pragma region CPU functions
 
-	void SDA(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
+	template <class T>
+	void SDA(Image<uint8_t>& input, Image<T>& output, float radius, int threshold, bool moreIntense)
 	{
 		//Todo fix arg templates - linker error
 		//template<class InBitDepth, class OutBitDepth>
@@ -446,90 +451,19 @@ namespace GPU
 		cudaFree(devInput);
 		cudaFree(devOutput);
 	}
-	
-	void FlyingHistogram(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
+
+	void SDAExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
 	{
-
-		uint16_t iradius = std::ceil(radius);
-
-		uint16_t DiffLen = 0, DiffLenZ = 0;
-		Coords* DiffAddZ, * DiffRemZ, * DiffAddY, * DiffRemY;//, * DiffAddX, * DiffRemX;   //array of coords of delta pixels
-
-		DiffLenZ = SetUpRadiusDifference(radius, &DiffAddZ, &DiffRemZ, true, Direction::Z); //number of delta pixels
-		DiffLen  = SetUpRadiusDifference(radius, &DiffAddY, &DiffRemY, true, Direction::Y);
-		//		   SetUpRadiusDifference(radius, &DiffAddX, &DiffRemX, true, Direction::X);
-
-		//to do anisotropic
-		//float asqr = radius * radius;
-		//float csqr = radiusZ * radiusZ;
-
-
-		dim3 numBlocks(input.Width() / 1024 + 1, 1, 1);
-		dim3 threadsPerBlock(1024, 1, 1);
-
-
-		uint64_t size = input.GetSize();
-		uint8_t* devInput, * devOutput;
-
-		Coords* devDiffAddZ, * devDiffRemZ, * devDiffAddY, * devDiffRemY;
-		gpuErrchk(cudaMalloc(&devDiffAddZ, DiffLenZ * sizeof(Coords)));
-		gpuErrchk(cudaMalloc(&devDiffRemZ, DiffLenZ * sizeof(Coords)));
-		gpuErrchk(cudaMalloc(&devDiffAddY, DiffLen  * sizeof(Coords)));
-		gpuErrchk(cudaMalloc(&devDiffRemY, DiffLen  * sizeof(Coords)));
-		gpuErrchk(cudaMemcpy(devDiffAddZ,  DiffAddZ, DiffLenZ * sizeof(Coords), cudaMemcpyHostToDevice));
-		gpuErrchk(cudaMemcpy(devDiffRemZ,  DiffRemZ, DiffLenZ * sizeof(Coords), cudaMemcpyHostToDevice));
-		gpuErrchk(cudaMemcpy(devDiffAddY,  DiffAddY, DiffLen  * sizeof(Coords), cudaMemcpyHostToDevice));
-		gpuErrchk(cudaMemcpy(devDiffRemY,  DiffRemY, DiffLen  * sizeof(Coords), cudaMemcpyHostToDevice));
-
-		uint32_t frames = input.Frames(),
-				 height = input.Height(),
-				 width  = input.Width();
-
-		uint8_t* devHistogram;						//array of starter histograms - only for device memory, no need to copy to host
-		uint8_t* devHistogramCopy;
-		uint8_t* devHistogramCopy2;
-		uint16_t histogramWidth = std::numeric_limits<uint8_t>::max() + 1;
-		uint64_t histogramSize = histogramWidth * width * sizeof(uint8_t);
-
-		cudaMalloc(&devHistogram, histogramSize);
-		cudaMalloc(&devHistogramCopy, histogramSize);
-		cudaMalloc(&devHistogramCopy2, histogramWidth * sizeof(uint8_t));
-		cudaMalloc(&devInput, size * sizeof(uint8_t));
-		cudaMalloc(&devOutput, size * sizeof(uint8_t));
-
-		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
-
-		FHFirstHistogramKernel<<<numBlocks, threadsPerBlock>>>
-			(devInput, devHistogram, histogramWidth, frames, height, width, radius, iradius, threshold);
-
-		cudaDeviceSynchronize();
-
-		FHKernel<<<numBlocks, threadsPerBlock >>>
-			(devInput, devOutput, devHistogram, devHistogramCopy, histogramWidth, devDiffRemZ, devDiffAddZ, devDiffRemY, devDiffAddY,
-				DiffLen, frames, height, width, iradius, threshold, moreIntense);
-
-		cudaDeviceSynchronize();
-
-		//uint8_t* testOut = new uint8_t[size];
-		//memset(testOut, 0, size);
-		//gpuErrchk(cudaMemcpy(testOut, devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
-		gpuErrchk(cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
-
-		//memcpy(output.GetDataPtr(), testOut, size * sizeof(uint8_t));
-
-		cudaFree(devDiffAddZ);
-		cudaFree(devDiffRemZ);
-		cudaFree(devDiffAddY);
-		cudaFree(devDiffRemY);
-
-		cudaFree(devHistogramCopy2);
-		cudaFree(devHistogramCopy);
-		cudaFree(devHistogram);
-		cudaFree(devInput);
-		cudaFree(devOutput);
+		SDA(input, output, radius, threshold, moreIntense);
 	}
 
-	void FlyingHistogram2(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
+	void SDAExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
+	{
+		SDA(input, output, radius, threshold, moreIntense);
+	}
+
+	template <class T>
+	void FlyingHistogram(Image<uint8_t>& input, Image<T>& output, float radius, int threshold, bool moreIntense)
 	{
 		uint16_t iradius = std::ceil(radius);
 
@@ -552,7 +486,8 @@ namespace GPU
 		dim3 numBlocksMargin(size / 1024 + 1, 1, 1);
 		dim3 threadsPerBlock(1024, 1, 1);
 
-		uint8_t* devInput, * devOutput;
+		uint8_t* devInput;
+		T* devOutput;
 
 		Coords* devDiffAddY, * devDiffRemY;
 		auto tesd = sizeof(Coords);
@@ -565,7 +500,7 @@ namespace GPU
 		uint16_t histogramWidth = std::numeric_limits<uint8_t>::max() + 1;
 
 		cudaMalloc(&devInput, size * sizeof(uint8_t));
-		cudaMalloc(&devOutput, size * sizeof(uint8_t));
+		cudaMalloc(&devOutput, size * sizeof(T));
 
 		gpuErrchk(cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
@@ -578,13 +513,23 @@ namespace GPU
 
 		cudaDeviceSynchronize();
 
-		gpuErrchk(cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
+		gpuErrchk(cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(T), cudaMemcpyDeviceToHost));
 
 		cudaFree(devDiffAddY);
 		cudaFree(devDiffRemY);
 
 		cudaFree(devInput);
 		cudaFree(devOutput);
+	}
+
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
+	{
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	}
+
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
+	{
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
 	}
 
 	void addWithCuda(int* c, const int* a, const int* b, int size)

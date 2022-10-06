@@ -14,6 +14,8 @@
 
 using namespace std::string_literals;
 
+#define SWEET_LOGGER_RELEASE
+
 #pragma region Image class
 
 template<class BitDepth>
@@ -36,7 +38,7 @@ Image<BitDepth>::Image(const Image& pattern)
 }
 
 template<class BitDepth>
-Image<BitDepth>::Image(int _width, int _height, int _frames)
+Image<BitDepth>::Image(uint32_t _width, uint32_t _height, uint32_t _frames)
 {
     width = _width;
     height = _height;
@@ -115,12 +117,21 @@ void Image<BitDepth>::Normalize()
 {
     BitDepth max = MaxValue();
     if (max == 0)
-        max = 1;
+        return;     //skip if empty
     uint32_t newMax = (uint32_t)(std::numeric_limits<BitDepth>::max);
     for (BitDepth* p = data; p < data + GetSize(); ++p)
         *p = (*p * newMax) / max;
 }
 
+template<class BitDepth>
+void Image<BitDepth>::Normalize(uint16_t newMax)
+{
+    BitDepth max = MaxValue();
+    if (max == 0)
+        return;     //skip if empty
+    for (BitDepth* p = data; p < data + GetSize(); ++p)
+        *p = (*p * newMax) / max;
+}
 
 template<class BitDepth>
 void Image<BitDepth>::Clear()
@@ -655,15 +666,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    Image<uint8_t> output{ input };
+    Image<uint16_t> output{ input.Width(), input.Height(), input.Frames() };
 
     auto start = std::chrono::high_resolution_clock::now();
     if (!onCpu)
     {
         if(!usingFH)
-            GPU::SDA(input, output, radius, threshold, moreIntense);
+            GPU::SDAExt(input, output, radius, threshold, moreIntense);
         else
-            GPU::FlyingHistogram2(input, output, radius, threshold, moreIntense);
+            GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
     }
     else
     {
@@ -681,7 +692,15 @@ int main(int argc, char** argv)
     
     std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
 
-    SaveTiff(output, outputFilename.c_str());
+    //auto a = (uint32_t)(std::numeric_limits<uint8_t>::max);
+    //todo use ^
+    output.Normalize(255);
+
+    Image<uint8_t> output8{input};
+
+    output8.CopyValuesFrom(output);
+
+    SaveTiff(output8, outputFilename.c_str());
 
     std::cout << "Finished" << std::endl;
 
