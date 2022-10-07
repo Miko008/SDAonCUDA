@@ -331,7 +331,7 @@ namespace GPU
 			CalculateDominanceOverMoreIntense;
 		//^set function ptr to selected dominance calculation
 
-		uint8_t* histogram = new uint8_t[histogramWidth];
+		uint8_t histogram[256] = { 0 };	//new uint8_t[histogramWidth];
 
 		for (int16_t k = -iradius; k <= iradius; k++)
 			for (int16_t j = -iradius; j <= iradius; j++)
@@ -373,7 +373,7 @@ namespace GPU
 				result);
 		}
 
-		delete[] histogram;
+		//delete[] histogram;
 	}
 
 	template <class T>
