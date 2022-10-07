@@ -229,16 +229,16 @@ bool CropTiff(Image<BitDepth>& image, Image<BitDepth>& croppedImage,
 {
     if (width1 < width0 || height1 < height0 || frames1 < frames0)
         return false;
-    if (image.width < width1 || image.height < height1 || image.frames < frames1)
+    if (image.Width() < width1 || image.Height() < height1 || image.Frames() < frames1)
         return false;
     croppedImage.SetSize(width1 - width0, height1 - height0, frames1 - frames0);
 
-    uint32_t width = image.width,
-        height = image.height,
-        frames = image.frames,
-        newWidth = croppedImage.width,
-        newHeight = croppedImage.height,
-        newFrames = croppedImage.frames;
+    uint32_t width  = image.Width(),
+             height = image.Height(),
+             frames = image.Frames(),
+             newWidth  = croppedImage.Width(),
+             newHeight = croppedImage.Height(),
+             newFrames = croppedImage.Frames();
 
     for (uint32_t z = 0; z < newFrames; z++)
         for (uint32_t y = 0; y < newHeight; y++)
