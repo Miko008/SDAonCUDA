@@ -662,43 +662,81 @@ int main(int argc, char** argv)
     
     if (!ReadTiff(input, inputFilename.c_str()))
     {
-        std::cout << "\n Error while reading"s + inputFilename + "\Terminating.";
+        std::cerr << "\n Error while reading"s + inputFilename + "\Terminating.";
         return 1;
     }
 
-    Image<uint16_t> output{ input.Width(), input.Height(), input.Frames() };
 
-    auto start = std::chrono::high_resolution_clock::now();
-    if (!onCpu)
+    Image<uint8_t> output8{ input };
+    
+    if (radius < 25)        //to do fix this - condition to keep templated functions build compile-time
     {
-        if(!usingFH)
-            GPU::SDAExt(input, output, radius, threshold, moreIntense);
+        LOG("Using 16bit output");
+        Image<uint16_t>output{ input.Width(), input.Height(), input.Frames() };
+
+        auto start = std::chrono::high_resolution_clock::now();
+        if (!onCpu)
+        {
+            if (!usingFH)
+                GPU::SDAExt(input, output, radius, threshold, moreIntense);
+            else
+                GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
+        }
         else
-            GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
+        {
+            if (!usingFH)
+                FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
+            else
+                if (threeDim)
+                    SDAborderless(input, output, radius, threshold);
+                else if (twoDim)
+                    SDAborderless2D(input, output, radius, threshold);
+        }
+        auto finish = std::chrono::high_resolution_clock::now();
+
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
+
+        std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
+        //auto a = (uint32_t)(std::numeric_limits<uint8_t>::max);
+        //todo use ^
+        output.Normalize(255);
+
+        output8.CopyValuesFrom(output);
     }
     else
     {
-        if (!usingFH)
-            FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
+        LOG("Using 32bit output");
+        Image<uint32_t>output{ input.Width(), input.Height(), input.Frames() };
+
+        auto start = std::chrono::high_resolution_clock::now();
+        if (!onCpu)
+        {
+            if (!usingFH)
+                GPU::SDAExt(input, output, radius, threshold, moreIntense);
+            else
+                GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
+        }
         else
-            if (threeDim)
-                SDAborderless(input, output, radius, threshold);
-            else if (twoDim)
-                SDAborderless2D(input, output, radius, threshold);
+        {
+            if (!usingFH)
+                FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
+            else
+                if (threeDim)
+                    SDAborderless(input, output, radius, threshold);
+                else if (twoDim)
+                    SDAborderless2D(input, output, radius, threshold);
+        }
+        auto finish = std::chrono::high_resolution_clock::now();
+
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
+
+        std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
+        //auto a = (uint32_t)(std::numeric_limits<uint8_t>::max);
+        //todo use ^
+        output.Normalize(255);
+
+        output8.CopyValuesFrom(output);
     }
-    auto finish = std::chrono::high_resolution_clock::now();
-
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
-    
-    std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
-
-    //auto a = (uint32_t)(std::numeric_limits<uint8_t>::max);
-    //todo use ^
-    output.Normalize(255);
-
-    Image<uint8_t> output8{input};
-
-    output8.CopyValuesFrom(output);
 
     SaveTiff(output8, outputFilename.c_str());
 

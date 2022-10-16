@@ -331,7 +331,7 @@ namespace GPU
 			CalculateDominanceOverMoreIntense;
 		//^set function ptr to selected dominance calculation
 
-		uint8_t histogram[256] = { 0 };	//new uint8_t[histogramWidth];
+		T histogram[256] = { 0 };	//new uint8_t[histogramWidth];
 
 		for (int16_t k = -iradius; k <= iradius; k++)
 			for (int16_t j = -iradius; j <= iradius; j++)
@@ -352,12 +352,12 @@ namespace GPU
 			}
 
 			//cacluate dominance in scope (temporary)
-			uint16_t result = 0;
+			T result = 0;
 			int zeroTest = in[(z * height + y) * width + x] + threshold;
 			uint16_t intensity = zeroTest > 0 ? zeroTest : 0;
 
 			if (!moreIntense)
-				for (uint64_t i = 0; i < intensity; i++)
+				for (uint64_t i = 0; i <= intensity; i++)
 					result += histogram[i];
 			else
 				for (uint64_t i = intensity; i < histogramWidth; i++)
@@ -394,7 +394,7 @@ namespace GPU
 			return;
 		//^skip core calculated by FH
 
-		uint16_t result = 0;
+		T result = 0;
 		auto condition = moreIntense ? MoreIntense : LessIntense;
 
 		for (int16_t k = -iradius; k <= iradius; k++)
@@ -426,10 +426,11 @@ namespace GPU
 	{
 		//Todo fix arg templates - linker error
 		//template<class InBitDepth, class OutBitDepth>
-		uint8_t* devInput, * devOutput;
+		uint8_t* devInput;
+		T* devOutput;
 		uint64_t size = input.GetSize();
 		cudaMalloc((void**)&devInput, size * sizeof(uint8_t));
-		cudaMalloc((void**)&devOutput, size * sizeof(uint8_t));
+		cudaMalloc((void**)&devOutput, size * sizeof(T));
 
 		cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
@@ -446,20 +447,10 @@ namespace GPU
 
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+		cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(T), cudaMemcpyDeviceToHost);
 
 		cudaFree(devInput);
 		cudaFree(devOutput);
-	}
-
-	void SDAExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		SDA(input, output, radius, threshold, moreIntense);
-	}
-
-	void SDAExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		SDA(input, output, radius, threshold, moreIntense);
 	}
 
 	template <class T>
@@ -522,13 +513,23 @@ namespace GPU
 		cudaFree(devOutput);
 	}
 
-	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	void SDAExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
+	}
+	void SDAExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
+	}
+	void SDAExt(Image<uint8_t>& input, Image<uint32_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
 	}
 
-	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
-	{
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense) {
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	}
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense) {
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	}
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint32_t>& output, float radius, int threshold, bool moreIntense) {
 		FlyingHistogram(input, output, radius, threshold, moreIntense);
 	}
 
