@@ -6,6 +6,7 @@
 #include "main.h"
 #include "cuda.h"
 
+constexpr uint32_t THREADS_PER_BLOCK = 1024;
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -440,8 +441,8 @@ namespace GPU
 		//dim3 threadsPerBlock(8, 8, 8);
 		//SDAKernel3D<<<numBlocks, threadsPerBlock>>>(devInput, devOutput, frames, height, width, radius, iradius, threshold, size);
 
-		dim3 numBlocks(size / 1024 + 1, 1, 1);
-		dim3 threadsPerBlock(1024, 1, 1);
+		dim3 numBlocks(size / THREADS_PER_BLOCK + 1, 1, 1);
+		dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
 		SDAKernel1D <<<numBlocks, threadsPerBlock>>>
 			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
@@ -473,9 +474,9 @@ namespace GPU
 				 width  = input.Width();
 		uint64_t size   = input.GetSize();
 
-		dim3 numBlocks((width * frames) / 1024 + 1, 1, 1);
-		dim3 numBlocksMargin(size / 1024 + 1, 1, 1);
-		dim3 threadsPerBlock(1024, 1, 1);
+		dim3 numBlocks((width * frames) / THREADS_PER_BLOCK + 1, 1, 1);
+		dim3 numBlocksMargin(size / THREADS_PER_BLOCK + 1, 1, 1);
+		dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
 
 		uint8_t* devInput;
 		T* devOutput;

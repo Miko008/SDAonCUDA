@@ -79,8 +79,11 @@ private:
 public:
     Image();
     Image(const Image& pattern);
+    Image(const Image& pattern, BitDepth val);
     Image(uint32_t _width, uint32_t _height, uint32_t _frames);
     ~Image();
+
+    Image& operator=(const Image& pattern);
 
     uint32_t Width()  { return width;  };
     uint32_t Height() { return height; };
@@ -91,7 +94,7 @@ public:
     bool operator==(Image& rhs) const;
 
     void Normalize();
-    void Normalize(uint16_t newMax);
+    void Normalize(size_t newMax);
     uint64_t GetSize() const;
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames);
     bool SetSlide(uint32_t frame, BitDepth* newslide);
