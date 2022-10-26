@@ -6,7 +6,7 @@
 #include "main.h"
 #include "cuda.h"
 
-constexpr uint32_t THREADS_PER_BLOCK = 1024;
+constexpr uint32_t THREADS_PER_BLOCK = 64;
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -320,16 +320,13 @@ namespace GPU
 	template <class T>
 	__global__ void FlyHistKernel(uint8_t* in, T* out, uint16_t histogramWidth, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
 	{
-		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
-		if (tempid >= frames * width)
-			return;
-		uint32_t z = tempid % frames;
-		tempid /= frames;
-		uint32_t x = tempid % width;
+		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
+		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
 		//^caclulate x and z based on thread id
 
 		if (x < iradius || z < iradius || x >= width - iradius || z >= frames - iradius)
-			return;			//return when out of bonds
+			return;			
+		//^return when out of bonds
 
 		//auto CalculateDominance = moreIntense ? CalculateDominanceOverLessIntense :\
 			CalculateDominanceOverMoreIntense;
@@ -394,7 +391,7 @@ namespace GPU
 		uint32_t z = tempid % frames;
 		//^caclulate x, y and z based on thread id
 
-		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//todo - change to or operations
 			return;
 		//^skip core calculated by FH
 
@@ -508,9 +505,9 @@ namespace GPU
 				 width  = input.Width();
 		uint64_t size   = input.GetSize();
 
-		dim3 numBlocks((width * frames) / THREADS_PER_BLOCK + 1, 1, 1);
+		dim3 numBlocks(width / 32 + 1, 1, frames / 32 + 1);
 		dim3 numBlocksMargin(width / 8 + 1, height / 8 + 1, frames / 8 + 1);
-		dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
+		dim3 threadsPerBlock(32, 1, 32);
 		dim3 threadsPerBlockMargin(8, 8, 8);
 
 		uint8_t* devInput;

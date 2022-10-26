@@ -632,7 +632,7 @@ Image<T2> Compute(Image<T1>& input, float radius, int threshold, bool moreIntens
     }
     else
     {
-        if (!usingFH)
+        if (usingFH)
             FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
         else
             if (threeDim)
