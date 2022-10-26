@@ -121,14 +121,17 @@ namespace GPU
 	/// <param name="iradius">ceiled radius</param>
 	/// <param name="threshold"></param>
 	/// <param name="size">image size</param>
-	__global__ void SDAKernel3D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size)
+	template <class T>
+	__global__ void SDAKernel3D(uint8_t* in, T* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size, bool moreIntense)
 	{
 		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
 		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
 		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
 
-		if (x > width || y > height || z > frames)
+		if (x >= width || y >= height || z >= frames)
 			return;
+
+		auto condition = moreIntense ? MoreIntense : LessIntense;
 
 		for (int16_t k = -iradius; k <= iradius; k++)
 			if (0 <= z + k && z + k < frames)
@@ -136,7 +139,7 @@ namespace GPU
 					if (0 <= y + j && y + j < height)
 						for (int16_t i = -iradius; i <= iradius; i++)
 							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
-								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
 									out[(z * height + y) * width + x]++;
 	}
 
@@ -391,7 +394,7 @@ namespace GPU
 		uint32_t z = tempid % frames;
 		//^caclulate x, y and z based on thread id
 
-		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//skip core calculated by FH
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))
 			return;
 		//^skip core calculated by FH
 
@@ -408,6 +411,37 @@ namespace GPU
 									result++;
 
 		out[(z * height + y) * width + x] = result; //SingleSDA(in, frames, height, width, x, y, z, asqr, iradius, threshold, moreIntense);
+	}
+
+	template <class T>
+	__global__ void MarginSDA3D(uint8_t* in, T* out, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	{
+		uint64_t x = threadIdx.x + blockIdx.x * blockDim.x;
+		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
+		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
+		//^caclulate x, y and z based on thread id
+
+		if (x >= width || y >= height || z >= frames)
+			return;
+		//^skip when out of bonds
+
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))
+			return;
+		//^skip core calculated by FH
+
+		T result = 0;
+		auto condition = moreIntense ? MoreIntense : LessIntense;
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			if (0 <= z + k && z + k < frames)
+				for (int16_t j = -iradius; j <= iradius; j++)
+					if (0 <= y + j && y + j < height)
+						for (int16_t i = -iradius; i <= iradius; i++)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
+									result++;
+
+		out[(z * height + y) * width + x] = result;
 	}
 
 	__global__ void addKernel(int* c, const int* a, const int* b, int size)
@@ -437,14 +471,14 @@ namespace GPU
 
 		uint16_t iradius = std::ceil(radius);
 
-		//dim3 numBlocks(64, 8, 8);
-		//dim3 threadsPerBlock(8, 8, 8);
-		//SDAKernel3D<<<numBlocks, threadsPerBlock>>>(devInput, devOutput, frames, height, width, radius, iradius, threshold, size);
+		dim3 numBlocks(input.Width() / 8 + 1, input.Height() / 8 + 1, input.Frames() / 8 + 1);
+		dim3 threadsPerBlock(8, 8, 8);
+		SDAKernel3D<<<numBlocks, threadsPerBlock>>>(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
-		dim3 numBlocks(size / THREADS_PER_BLOCK + 1, 1, 1);
-		dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
-		SDAKernel1D <<<numBlocks, threadsPerBlock>>>
-			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
+		//dim3 numBlocks(size / THREADS_PER_BLOCK + 1, 1, 1);
+		//dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
+		//SDAKernel1D <<<numBlocks, threadsPerBlock>>>
+		//	(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
 		cudaDeviceSynchronize();
 
@@ -475,14 +509,14 @@ namespace GPU
 		uint64_t size   = input.GetSize();
 
 		dim3 numBlocks((width * frames) / THREADS_PER_BLOCK + 1, 1, 1);
-		dim3 numBlocksMargin(size / THREADS_PER_BLOCK + 1, 1, 1);
+		dim3 numBlocksMargin(width / 8 + 1, height / 8 + 1, frames / 8 + 1);
 		dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
+		dim3 threadsPerBlockMargin(8, 8, 8);
 
 		uint8_t* devInput;
 		T* devOutput;
 
 		Coords* devDiffAddY, * devDiffRemY;
-		auto tesd = sizeof(Coords);
 		gpuErrchk(cudaMalloc(&devDiffAddY, DiffLen * sizeof(Coords)));
 		gpuErrchk(cudaMalloc(&devDiffRemY, DiffLen * sizeof(Coords)));
 		gpuErrchk(cudaMemcpy(devDiffAddY, DiffAddY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
@@ -500,7 +534,7 @@ namespace GPU
 		FlyHistKernel <<<numBlocks, threadsPerBlock >>>
 			(devInput, devOutput, histogramWidth, devDiffRemY, devDiffAddY, DiffLen, frames, height, width, iradius, radius * radius, threshold, moreIntense);
 
-		MarginSDA <<<numBlocksMargin, threadsPerBlock >>>
+		MarginSDA3D <<<numBlocksMargin, threadsPerBlockMargin >>>
 			(devInput, devOutput, histogramWidth, frames, height, width, iradius, radius * radius, threshold, moreIntense);
 
 		cudaDeviceSynchronize();

@@ -14,7 +14,6 @@
 
 using namespace std::string_literals;
 
-#define SWEET_LOGGER_RELEASE
 
 #pragma region Image class
 

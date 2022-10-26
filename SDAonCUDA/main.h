@@ -5,6 +5,10 @@
 
 #include <iostream>
 
+#ifdef NDEBUG
+#define SWEET_NO_LOGGER
+#endif
+
 enum class Direction
 {
     Z = 0,
@@ -114,12 +118,6 @@ public:
     {
         if (GetSize() != pattern.GetSize())
             return;
-        //T2* q = pattern.GetDataPtr();\
-        for (BitDepth* p = data; p < data + GetSize(); ++p)\
-        {\
-            *p = static_cast<BitDepth>(*q);\
-            ++q;\
-        }
         for (size_t k = 0; k < frames; k++)
             for (size_t j = 0; j < height; j++)
                 for (size_t i = 0; i < width; i++)
