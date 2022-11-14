@@ -1,6 +1,3 @@
-[submodule "external/sweet"]
-	path = external/sweet
-	url = https://github.com/burner/sweet.hpp.git
 [submodule "SDAonCUDA/sweet"]
 	path = SDAonCUDA/sweet
-	url = https://github.com/burner/sweet.hpp.git
+	url  = https://github.com/Miko008/sweet.hpp

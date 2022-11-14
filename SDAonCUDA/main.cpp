@@ -14,7 +14,6 @@
 
 using namespace std::string_literals;
 
-#define SWEET_LOGGER_RELEASE
 
 #pragma region Image class
 
@@ -34,7 +33,17 @@ Image<BitDepth>::Image(const Image& pattern)
     height = pattern.height;
     frames = pattern.frames;
     data   = new BitDepth[GetSize()];
-    memset(data, 0, GetSize());
+    memcpy(data, pattern.data, GetSize() * sizeof(BitDepth));
+}
+
+template<class BitDepth>
+Image<BitDepth>::Image(const Image& pattern, BitDepth val)
+{
+    width = pattern.width;
+    height = pattern.height;
+    frames = pattern.frames;
+    data = new BitDepth[GetSize()];
+    memset(data, val, GetSize() * sizeof(BitDepth));
 }
 
 template<class BitDepth>
@@ -44,7 +53,7 @@ Image<BitDepth>::Image(uint32_t _width, uint32_t _height, uint32_t _frames)
     height = _height;
     frames = _frames;
     data = new BitDepth[GetSize()];
-    memset(data, 0, GetSize());
+    memset(data, 0, GetSize() * sizeof(BitDepth));
 }
 
 
@@ -54,6 +63,11 @@ Image<BitDepth>::~Image()
     delete[] data;
 }
 
+template<class BitDepth>
+Image<BitDepth>& Image<BitDepth>::operator=(const Image<BitDepth>& pattern)
+{
+    return Image<BitDepth>(pattern);
+}
 
 template<class BitDepth>
 BitDepth& Image<BitDepth>::Image::operator()(uint32_t z, uint32_t y, uint32_t x)
@@ -94,7 +108,7 @@ bool Image<BitDepth>::SetSlide(uint32_t frame, BitDepth* newslide)
     if (frame < frames)
     {
         BitDepth* slidestart = (data + frame * static_cast<uint64_t>(width) * height);
-        memcpy(slidestart, newslide, width * static_cast<uint64_t>(height));
+        memcpy(slidestart, newslide, width * static_cast<uint64_t>(height) * sizeof(BitDepth));
     }
     else
         return false;
@@ -118,13 +132,13 @@ void Image<BitDepth>::Normalize()
     BitDepth max = MaxValue();
     if (max == 0)
         return;     //skip if empty
-    uint32_t newMax = (uint32_t)(std::numeric_limits<BitDepth>::max);
+    size_t newMax = (size_t)(std::numeric_limits<BitDepth>::max());
     for (BitDepth* p = data; p < data + GetSize(); ++p)
         *p = (*p * newMax) / max;
 }
 
 template<class BitDepth>
-void Image<BitDepth>::Normalize(uint16_t newMax)
+void Image<BitDepth>::Normalize(size_t newMax)
 {
     BitDepth max = MaxValue();
     if (max == 0)
@@ -136,7 +150,7 @@ void Image<BitDepth>::Normalize(uint16_t newMax)
 template<class BitDepth>
 void Image<BitDepth>::Clear()
 {
-    memset(data, 0, GetSize());
+    memset(data, 0, GetSize() * sizeof(BitDepth));
 }
 
 
@@ -198,7 +212,7 @@ bool ReadTiff(Image<BitDepth>& image, const char* filename)
 template<class BitDepth>
 bool SaveTiff(Image<BitDepth>& image, const char* filename)
 {
-    TinyTIFFWriterFile* tiff = TinyTIFFWriter_open(filename, 8, TinyTIFFWriter_UInt, 1, image.Width(), image.Height(), TinyTIFFWriter_Greyscale);
+    TinyTIFFWriterFile* tiff = TinyTIFFWriter_open(filename, sizeof(BitDepth) * 8, TinyTIFFWriter_UInt, 1, image.Width(), image.Height(), TinyTIFFWriter_Greyscale);
     //bits per sample constant cause of some errors
 
     LOG("\nSaving as '"s + filename + "'\n"s);
@@ -603,6 +617,87 @@ void FlyingHistogram(Image<InBitDepth>& image, Image<OutBitDepth>& output, float
     delete[] DiffAddZ, DiffRemZ, DiffAddY, DiffRemY, DiffAddX, DiffRemX;
 }
 
+template<class T1, class T2>
+Image<T2> Compute(Image<T1>& input, float radius, int threshold, bool moreIntense, bool threeDim, bool onCpu, bool usingFH)
+{
+    Image<T2>output{ input.Width(), input.Height(), input.Frames() };
+
+    auto start = std::chrono::high_resolution_clock::now();
+    if (!onCpu)
+    {
+        if (!usingFH)
+            GPU::SDAExt(input, output, radius, threshold, moreIntense);
+        else
+            GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
+    }
+    else
+    {
+        if (usingFH)
+            FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
+        else
+            if (threeDim)
+                SDAborderless(input, output, radius, threshold);
+            else
+                SDAborderless2D(input, output, radius, threshold);
+    }
+    auto finish = std::chrono::high_resolution_clock::now();
+
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
+
+    std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
+
+    return output;
+}
+
+template <class T1, class T2>
+bool SaveNormalized(Image<T1>& input, float radius, int threshold, bool moreIntense, bool threeDim, bool onCpu, bool usingFH, bool normalize, std::string outputFilename)
+{
+    if (radius < 24)
+    {
+        Image<uint16_t> output = Compute<T1, uint16_t>(input, radius, threshold, moreIntense, threeDim, onCpu, usingFH);
+        
+        if (!normalize)
+            return SaveTiff(output, outputFilename.c_str());
+        else
+        {
+            Image<T2> outputRescaled{ input.Width(), input.Height(), input.Frames() };
+            if (sizeof(T2) >= sizeof(uint16_t))
+            {
+                outputRescaled.CopyValuesFrom(output);
+                outputRescaled.Normalize();
+            }
+            else
+            {
+                output.Normalize(std::numeric_limits<T2>::max());
+                outputRescaled.CopyValuesFrom(output);
+            }
+            return SaveTiff(outputRescaled, outputFilename.c_str());
+        }
+    }
+    else
+    {
+        Image<uint32_t> output = Compute<T1, uint32_t>(input, radius, threshold, moreIntense, threeDim, onCpu, usingFH);
+
+        if (!normalize)
+            return SaveTiff(output, outputFilename.c_str());
+        else
+        {
+            Image<T2> outputRescaled{ input.Width(), input.Height(), input.Frames() };
+            if (sizeof(T2) >= sizeof(uint32_t))
+            {
+                outputRescaled.CopyValuesFrom(output);
+                outputRescaled.Normalize();
+            }
+            else
+            {
+                output.Normalize(std::numeric_limits<T2>::max());
+                outputRescaled.CopyValuesFrom(output);
+            }
+            return SaveTiff(outputRescaled, outputFilename.c_str());
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
     std::string inputFilename;
@@ -616,24 +711,33 @@ int main(int argc, char** argv)
     bool moreIntense = false;
     bool onCpu       = false;
     bool usingFH     = false;
+    bool normalize   = false;
+    bool out8        = false;
+    bool out16       = false;
+    bool out32       = false;
 
     sweet::Options opt(argc, const_cast<char**>(argv), "Description:");
 
-    opt.get("-i", "--input", "Input filename", inputFilename);
-    opt.get("-o", "--output", "Output filename (optional)", outputFilename);
+    opt.get("-i",   "--input",        "Input filename",                                           inputFilename);
+    opt.get("-o",   "--output",       "Output filename (optional)",                               outputFilename);
 
-    opt.get("-r", "--radius", "Radius in pixels", radius);
-    opt.get("-z", "--radius-z", "Radius in pixels in anisotropic axis (optional)", radiusZ);
-    opt.get("-t", "--threshold", "Intensity threshold (optional)", threshold);
-    opt.get("-m", "--more-intense", "Calculate dominance over more intense pixels (optional)", moreIntense);
+    opt.get("-r",   "--radius",       "Radius in pixels",                                         radius);
+    opt.get("-z",   "--radius-z",     "Radius in pixels in anisotropic axis (optional)",          radiusZ);
+    opt.get("-t",   "--threshold",    "Intensity threshold (optional)",                           threshold);
+    opt.get("-m",   "--more-intense", "Calculate dominance over more intense pixels (optional)",  moreIntense);
 
-    opt.get("-2", "--2-dim", "Two dimensional algorithm (CPU only)", twoDim);
-    opt.get("-3", "--3-dim", "Three dimensional algorithm", threeDim);
+    opt.get("-2",   "--2-dim",        "Two dimensional algorithm (CPU only)",                     twoDim);
+    opt.get("-3",   "--3-dim",        "Three dimensional algorithm",                              threeDim);
     
-    opt.get("-c", "--cpu", "Compute sequentially on CPU (optional)", onCpu);
-    opt.get("-f", "--fly-hist", "Use flying histogram version of algorithm (optional)", usingFH);
+    opt.get("-c",   "--cpu",          "Compute sequentially on CPU (optional)",                   onCpu);
+    opt.get("-f",   "--fly-hist",     "Use flying histogram version of algorithm (optional)",     usingFH);
+
+    opt.get("-n",   "--normalize",    "Normalize output to selected bit depth",                   normalize);
+    opt.get("-o8",  "--output-8",     "Use 8-bit output",                                         out8);
+    opt.get("-o16", "--output-16",    "Use 16-bit output",                                        out16);
+    opt.get("-o32", "--output-32",    "Use 32-bit output",                                        out32);
    
-    opt.get("-h", "--help", "Get help", help);
+    opt.get("-h",   "--help",         "Get help",                                                 help);
 
     opt.finalize();
 
@@ -662,45 +766,17 @@ int main(int argc, char** argv)
     
     if (!ReadTiff(input, inputFilename.c_str()))
     {
-        std::cout << "\n Error while reading"s + inputFilename + "\Terminating.";
+        std::cerr << "\n Error while reading"s + inputFilename + "\Terminating.";
         return 1;
     }
 
-    Image<uint16_t> output{ input.Width(), input.Height(), input.Frames() };
+    if (out8 || !normalize)
+        SaveNormalized<uint8_t, uint8_t> (input, radius, threshold, moreIntense, threeDim, onCpu, usingFH, normalize, outputFilename);
+    else if (out16)
+        SaveNormalized<uint8_t, uint16_t>(input, radius, threshold, moreIntense, threeDim, onCpu, usingFH, normalize, outputFilename);
+    else if (out32)
+        SaveNormalized<uint8_t, uint32_t>(input, radius, threshold, moreIntense, threeDim, onCpu, usingFH, normalize, outputFilename);
 
-    auto start = std::chrono::high_resolution_clock::now();
-    if (!onCpu)
-    {
-        if(!usingFH)
-            GPU::SDAExt(input, output, radius, threshold, moreIntense);
-        else
-            GPU::FlyingHistogramExt(input, output, radius, threshold, moreIntense);
-    }
-    else
-    {
-        if (!usingFH)
-            FlyingHistogram(input, output, radius, radius, threshold, moreIntense, threeDim);
-        else
-            if (threeDim)
-                SDAborderless(input, output, radius, threshold);
-            else if (twoDim)
-                SDAborderless2D(input, output, radius, threshold);
-    }
-    auto finish = std::chrono::high_resolution_clock::now();
-
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start);
-    
-    std::cout << "\nTime Elapsed:" << milliseconds.count() << "ms\n";
-
-    //auto a = (uint32_t)(std::numeric_limits<uint8_t>::max);
-    //todo use ^
-    output.Normalize(255);
-
-    Image<uint8_t> output8{input};
-
-    output8.CopyValuesFrom(output);
-
-    SaveTiff(output8, outputFilename.c_str());
 
     std::cout << "Finished" << std::endl;
 

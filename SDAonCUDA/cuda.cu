@@ -6,6 +6,7 @@
 #include "main.h"
 #include "cuda.h"
 
+constexpr uint32_t THREADS_PER_BLOCK = 64;
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -120,14 +121,17 @@ namespace GPU
 	/// <param name="iradius">ceiled radius</param>
 	/// <param name="threshold"></param>
 	/// <param name="size">image size</param>
-	__global__ void SDAKernel3D(uint8_t* in, uint8_t* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size)
+	template <class T>
+	__global__ void SDAKernel3D(uint8_t* in, T* out, uint32_t frames, uint32_t height, uint32_t width, float asqr, uint16_t iradius, int threshold, uint64_t size, bool moreIntense)
 	{
 		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
 		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
 		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
 
-		if (x > width || y > height || z > frames)
+		if (x >= width || y >= height || z >= frames)
 			return;
+
+		auto condition = moreIntense ? MoreIntense : LessIntense;
 
 		for (int16_t k = -iradius; k <= iradius; k++)
 			if (0 <= z + k && z + k < frames)
@@ -135,7 +139,7 @@ namespace GPU
 					if (0 <= y + j && y + j < height)
 						for (int16_t i = -iradius; i <= iradius; i++)
 							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
-								if (in[((z + k) * height + y + j) * width + x + i] >= in[(z * height + y) * width + x] + threshold)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
 									out[(z * height + y) * width + x]++;
 	}
 
@@ -316,22 +320,19 @@ namespace GPU
 	template <class T>
 	__global__ void FlyHistKernel(uint8_t* in, T* out, uint16_t histogramWidth, Coords* DiffRemY, Coords* DiffAddY, uint16_t diffLen, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
 	{
-		uint64_t tempid = threadIdx.x + blockIdx.x * blockDim.x;
-		if (tempid >= frames * width)
-			return;
-		uint32_t z = tempid % frames;
-		tempid /= frames;
-		uint32_t x = tempid % width;
+		uint32_t x = threadIdx.x + blockIdx.x * blockDim.x;
+		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
 		//^caclulate x and z based on thread id
 
 		if (x < iradius || z < iradius || x >= width - iradius || z >= frames - iradius)
-			return;			//return when out of bonds
+			return;			
+		//^return when out of bonds
 
 		//auto CalculateDominance = moreIntense ? CalculateDominanceOverLessIntense :\
 			CalculateDominanceOverMoreIntense;
 		//^set function ptr to selected dominance calculation
 
-		uint8_t histogram[256] = { 0 };	//new uint8_t[histogramWidth];
+		T histogram[256] = { 0 };	//new uint8_t[histogramWidth];
 
 		for (int16_t k = -iradius; k <= iradius; k++)
 			for (int16_t j = -iradius; j <= iradius; j++)
@@ -352,12 +353,12 @@ namespace GPU
 			}
 
 			//cacluate dominance in scope (temporary)
-			uint16_t result = 0;
+			T result = 0;
 			int zeroTest = in[(z * height + y) * width + x] + threshold;
 			uint16_t intensity = zeroTest > 0 ? zeroTest : 0;
 
 			if (!moreIntense)
-				for (uint64_t i = 0; i < intensity; i++)
+				for (uint64_t i = 0; i <= intensity; i++)
 					result += histogram[i];
 			else
 				for (uint64_t i = intensity; i < histogramWidth; i++)
@@ -390,11 +391,11 @@ namespace GPU
 		uint32_t z = tempid % frames;
 		//^caclulate x, y and z based on thread id
 
-		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//skip core calculated by FH
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))	//todo - change to or operations
 			return;
 		//^skip core calculated by FH
 
-		uint16_t result = 0;
+		T result = 0;
 		auto condition = moreIntense ? MoreIntense : LessIntense;
 
 		for (int16_t k = -iradius; k <= iradius; k++)
@@ -407,6 +408,37 @@ namespace GPU
 									result++;
 
 		out[(z * height + y) * width + x] = result; //SingleSDA(in, frames, height, width, x, y, z, asqr, iradius, threshold, moreIntense);
+	}
+
+	template <class T>
+	__global__ void MarginSDA3D(uint8_t* in, T* out, uint16_t histogramWidth, uint32_t frames, uint32_t height, uint32_t width, uint16_t iradius, float asqr, int threshold, bool moreIntense)
+	{
+		uint64_t x = threadIdx.x + blockIdx.x * blockDim.x;
+		uint32_t y = threadIdx.y + blockIdx.y * blockDim.y;
+		uint32_t z = threadIdx.z + blockIdx.z * blockDim.z;
+		//^caclulate x, y and z based on thread id
+
+		if (x >= width || y >= height || z >= frames)
+			return;
+		//^skip when out of bonds
+
+		if ((x >= iradius && x < width - iradius) && (y >= iradius && y < height - iradius) && (z >= iradius && z < frames - iradius))
+			return;
+		//^skip core calculated by FH
+
+		T result = 0;
+		auto condition = moreIntense ? MoreIntense : LessIntense;
+
+		for (int16_t k = -iradius; k <= iradius; k++)
+			if (0 <= z + k && z + k < frames)
+				for (int16_t j = -iradius; j <= iradius; j++)
+					if (0 <= y + j && y + j < height)
+						for (int16_t i = -iradius; i <= iradius; i++)
+							if (0 <= x + i && x + i < width && i * i + j * j + k * k <= asqr)
+								if (condition(in[((z + k) * height + y + j) * width + x + i], in[(z * height + y) * width + x], threshold))
+									result++;
+
+		out[(z * height + y) * width + x] = result;
 	}
 
 	__global__ void addKernel(int* c, const int* a, const int* b, int size)
@@ -426,40 +458,31 @@ namespace GPU
 	{
 		//Todo fix arg templates - linker error
 		//template<class InBitDepth, class OutBitDepth>
-		uint8_t* devInput, * devOutput;
+		uint8_t* devInput;
+		T* devOutput;
 		uint64_t size = input.GetSize();
 		cudaMalloc((void**)&devInput, size * sizeof(uint8_t));
-		cudaMalloc((void**)&devOutput, size * sizeof(uint8_t));
+		cudaMalloc((void**)&devOutput, size * sizeof(T));
 
 		cudaMemcpy(devInput, input.GetDataPtr(), size * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
 		uint16_t iradius = std::ceil(radius);
 
-		//dim3 numBlocks(64, 8, 8);
-		//dim3 threadsPerBlock(8, 8, 8);
-		//SDAKernel3D<<<numBlocks, threadsPerBlock>>>(devInput, devOutput, frames, height, width, radius, iradius, threshold, size);
+		dim3 numBlocks(input.Width() / 8 + 1, input.Height() / 8 + 1, input.Frames() / 8 + 1);
+		dim3 threadsPerBlock(8, 8, 8);
+		SDAKernel3D<<<numBlocks, threadsPerBlock>>>(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
-		dim3 numBlocks(size / 1024 + 1, 1, 1);
-		dim3 threadsPerBlock(1024, 1, 1);
-		SDAKernel1D <<<numBlocks, threadsPerBlock>>>
-			(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
+		//dim3 numBlocks(size / THREADS_PER_BLOCK + 1, 1, 1);
+		//dim3 threadsPerBlock(THREADS_PER_BLOCK, 1, 1);
+		//SDAKernel1D <<<numBlocks, threadsPerBlock>>>
+		//	(devInput, devOutput, input.Frames(), input.Height(), input.Width(), radius * radius, iradius, threshold, size, moreIntense);
 
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+		cudaMemcpy(output.GetDataPtr(), devOutput, size * sizeof(T), cudaMemcpyDeviceToHost);
 
 		cudaFree(devInput);
 		cudaFree(devOutput);
-	}
-
-	void SDAExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		SDA(input, output, radius, threshold, moreIntense);
-	}
-
-	void SDAExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		SDA(input, output, radius, threshold, moreIntense);
 	}
 
 	template <class T>
@@ -482,15 +505,15 @@ namespace GPU
 				 width  = input.Width();
 		uint64_t size   = input.GetSize();
 
-		dim3 numBlocks((width * frames) / 1024 + 1, 1, 1);
-		dim3 numBlocksMargin(size / 1024 + 1, 1, 1);
-		dim3 threadsPerBlock(1024, 1, 1);
+		dim3 numBlocks(width / 32 + 1, 1, frames / 32 + 1);
+		dim3 numBlocksMargin(width / 8 + 1, height / 8 + 1, frames / 8 + 1);
+		dim3 threadsPerBlock(32, 1, 32);
+		dim3 threadsPerBlockMargin(8, 8, 8);
 
 		uint8_t* devInput;
 		T* devOutput;
 
 		Coords* devDiffAddY, * devDiffRemY;
-		auto tesd = sizeof(Coords);
 		gpuErrchk(cudaMalloc(&devDiffAddY, DiffLen * sizeof(Coords)));
 		gpuErrchk(cudaMalloc(&devDiffRemY, DiffLen * sizeof(Coords)));
 		gpuErrchk(cudaMemcpy(devDiffAddY, DiffAddY, DiffLen * sizeof(Coords), cudaMemcpyHostToDevice));
@@ -508,7 +531,7 @@ namespace GPU
 		FlyHistKernel <<<numBlocks, threadsPerBlock >>>
 			(devInput, devOutput, histogramWidth, devDiffRemY, devDiffAddY, DiffLen, frames, height, width, iradius, radius * radius, threshold, moreIntense);
 
-		MarginSDA <<<numBlocksMargin, threadsPerBlock >>>
+		MarginSDA3D <<<numBlocksMargin, threadsPerBlockMargin >>>
 			(devInput, devOutput, histogramWidth, frames, height, width, iradius, radius * radius, threshold, moreIntense);
 
 		cudaDeviceSynchronize();
@@ -522,13 +545,23 @@ namespace GPU
 		cudaFree(devOutput);
 	}
 
-	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense)
-	{
-		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	void SDAExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
+	}
+	void SDAExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
+	}
+	void SDAExt(Image<uint8_t>& input, Image<uint32_t>& output, float radius, int threshold, bool moreIntense) {
+		SDA(input, output, radius, threshold, moreIntense);
 	}
 
-	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense)
-	{
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint8_t>& output, float radius, int threshold, bool moreIntense) {
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	}
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint16_t>& output, float radius, int threshold, bool moreIntense) {
+		FlyingHistogram(input, output, radius, threshold, moreIntense);
+	}
+	void FlyingHistogramExt(Image<uint8_t>& input, Image<uint32_t>& output, float radius, int threshold, bool moreIntense) {
 		FlyingHistogram(input, output, radius, threshold, moreIntense);
 	}
 

@@ -5,6 +5,10 @@
 
 #include <iostream>
 
+#ifdef NDEBUG
+#define SWEET_NO_LOGGER
+#endif
+
 enum class Direction
 {
     Z = 0,
@@ -79,8 +83,11 @@ private:
 public:
     Image();
     Image(const Image& pattern);
+    Image(const Image& pattern, BitDepth val);
     Image(uint32_t _width, uint32_t _height, uint32_t _frames);
     ~Image();
+
+    Image& operator=(const Image& pattern);
 
     uint32_t Width()  { return width;  };
     uint32_t Height() { return height; };
@@ -91,7 +98,7 @@ public:
     bool operator==(Image& rhs) const;
 
     void Normalize();
-    void Normalize(uint16_t newMax);
+    void Normalize(size_t newMax);
     uint64_t GetSize() const;
     void SetSize(uint32_t _width, uint32_t _height, uint32_t _frames);
     bool SetSlide(uint32_t frame, BitDepth* newslide);
@@ -111,12 +118,6 @@ public:
     {
         if (GetSize() != pattern.GetSize())
             return;
-        //T2* q = pattern.GetDataPtr();\
-        for (BitDepth* p = data; p < data + GetSize(); ++p)\
-        {\
-            *p = static_cast<BitDepth>(*q);\
-            ++q;\
-        }
         for (size_t k = 0; k < frames; k++)
             for (size_t j = 0; j < height; j++)
                 for (size_t i = 0; i < width; i++)
