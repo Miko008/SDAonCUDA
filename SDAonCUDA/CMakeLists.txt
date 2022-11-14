@@ -44,5 +44,3 @@ endif()
 
 add_subdirectory(sweet)
 target_include_directories(${PROJECT_NAME} PUBLIC sweet)
-#target_link_directories(${PROJECT_NAME} PUBLIC sweet)
-#target_link_libraries(${PROJECT_NAME} sweet)
